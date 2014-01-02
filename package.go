@@ -20,10 +20,10 @@ var (
 )
 
 type Header struct {
-	Dir           string
-	File          string
-	OtherCode     string
-	NamePrefix    string
+	Dir        string
+	File       string
+	OtherCode  string
+	NamePrefix string
 	// Not define it in the package, but may still searchable as included types
 	// because it may be manually defined.
 	Excluded      []string
@@ -32,7 +32,11 @@ type Header struct {
 }
 
 func (h Header) FullPath() string {
-	return h.Dir + h.File
+	file := h.Dir + h.File
+	if !fileExists(file) {
+		panic("Header file cannot be found: " + file)
+	}
+	return file
 }
 
 func (h Header) Write(w io.Writer) {

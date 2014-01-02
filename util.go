@@ -7,6 +7,7 @@ package cwrap
 import (
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -28,11 +29,7 @@ func checkError(err error) {
 }
 
 func gofmt(file string) error {
-	cmd := exec.Command("go", "fmt", file)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	return cmd.Wait()
+	return newCmd("go", "fmt", file).exec()
 }
 
 func fp(w io.Writer, v ...interface{}) {
@@ -162,4 +159,68 @@ func atoi(s string) int {
 		panic(err)
 	}
 	return i
+}
+
+func fileExists(file string) bool {
+	f, err := os.Open(file)
+	if err != nil {
+		return false
+	}
+	f.Close()
+	return true
+}
+
+type cmd struct {
+	*exec.Cmd
+}
+
+func newCmd(name string, arg ...string) cmd {
+	return cmd{exec.Command(name, arg...)}
+}
+
+func (c cmd) read(visit func(r io.Reader) error) error {
+	stdout, err := c.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	defer stdout.Close()
+	stderr, err := c.StderrPipe()
+	if err != nil {
+		return err
+	}
+	defer stderr.Close()
+	if err := c.Start(); err != nil {
+		return err
+	}
+	go io.Copy(os.Stderr, stderr)
+	if err := visit(stdout); err != nil {
+		return err
+	}
+	if err := c.Wait(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c cmd) exec() error {
+	stdout, err := c.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	defer stdout.Close()
+	stderr, err := c.StderrPipe()
+	if err != nil {
+		return err
+	}
+	defer stderr.Close()
+	if err := c.Start(); err != nil {
+		return err
+	}
+	go io.Copy(os.Stderr, stderr)
+	go io.Copy(os.Stdout, stdout)
+	if err := c.Wait(); err != nil {
+		return err
+	}
+	return nil
+
 }

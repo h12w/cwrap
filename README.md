@@ -19,7 +19,19 @@ Features
 
 Examples
 --------
-In the examples directory, there are three libraries that I have successfully applied Cwrap: GNU Scientific Library, PLplot and Simple DirectMedia Layer.
+In the examples directory, there are C libraries that I have successfully applied Cwrap, including:
+* GSL (GNU Scientific Library)
+* PLplot
+* SDL2 (Simple DirectMedia Layer)
+
+You are very welcome to submit examples you think useful to others.
+
+Issue Report
+------------
+Cwrap may not cover every possible case and fails to come up with a corrresonding Go type or convertion, then the generated code may not be able to compile. When this happens, do the following steps:
+1. Comment out the failed function wrappers till it compiles.
+2. Add the C names of these failed functions to the excluded list (Package.From.Excluded).
+3. Submit the generator example to me. I cannot guarantee anything but I will try to fix critical issues.
 
 TODO
 ----

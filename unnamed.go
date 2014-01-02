@@ -75,7 +75,7 @@ func (s SliceSlice) ToCgo(w io.Writer, assign, g, c string) {
 	Slice{namer{s.GoName(), s.CgoName()}}.ToCgo(w, assign, c_, c)
 }
 
-type StringSlice struct {}
+type StringSlice struct{}
 
 func (s StringSlice) GoName() string {
 	return "[]string"
@@ -93,7 +93,7 @@ func (s StringSlice) ToCgo(w io.Writer, assign, g, c string) {
 	c_ := c + "_"
 	fp(w, c_, " := make([]*C.char, len(", g, "))")
 	fp(w, "for i := range ", g, "{")
-	String{}.ToCgo(w, "", g + "[i]", c_ + "[i]")
+	String{}.ToCgo(w, "", g+"[i]", c_+"[i]")
 	fp(w, "}")
 	Slice{namer{"[]string", "**C.char"}}.ToCgo(w, assign, c_, c)
 }
