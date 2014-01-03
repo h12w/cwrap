@@ -24,9 +24,7 @@ var (
 			File:       "gsl/gsl_rng.h",
 			OtherCode:  "",
 			NamePrefix: "gsl_rng",
-			Excluded: []string{
-				"gsl_rng",
-			},
+			Excluded: []string{},
 			CgoDirectives: []string{CgoDirective},
 		},
 		Included: []*Package{},
@@ -76,6 +74,7 @@ var (
 )
 
 func Test(*testing.T) {
+	//OutputDir += "reg/"
 	c(ran.Wrap())
 	c(rng.Wrap())
 	c(stats.Wrap())

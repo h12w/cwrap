@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"sort"
 	"syscall"
 )
 
@@ -22,8 +23,8 @@ var (
 type Header struct {
 	Dir        string
 	File       string
-	OtherCode  string
 	NamePrefix string
+	OtherCode  string
 	// Not define it in the package, but may still searchable as included types
 	// because it may be manually defined.
 	Excluded      []string
@@ -45,16 +46,25 @@ func (h Header) Write(w io.Writer) {
 }
 
 type Package struct {
-	PacName    string
-	PacPath    string
-	From       Header
-	Included   []*Package
-	GoFile     string
-	CFile      string
-	HFile      string
+	// Required
+	PacName string
+	PacPath string
+	From    Header
+
+	// Optional
+	Included []*Package
+	GoFile   string
+	CFile    string
+	HFile    string
+
+	// Internal
 	localNames map[string]string
 	fileIds    SSet
 	boolSet    SSet
+	structs    map[string]*Struct // Key: go name
+	unions     map[string]*Union  // Key: go name
+	functions  Functions
+	callbacks  []CallbackFunc
 	Statistics
 	*gcc.XmlDoc
 }
@@ -62,6 +72,8 @@ type Package struct {
 func (pac *Package) Load() (err error) {
 	pac.localNames = make(map[string]string)
 	pac.initBoolSet()
+	pac.structs = make(map[string]*Struct)
+	pac.unions = make(map[string]*Union)
 	if err := pac.loadXmlDoc(); err != nil {
 		return err
 	}
@@ -174,18 +186,34 @@ func (pac *Package) Wrap() error {
 		return err
 	}
 	defer h.Close()
+	if err := pac.prepare(); err != nil {
+		return err
+	}
 	if err := pac.write(g, c, h); err != nil {
 		return err
 	}
 	return gofmt(pac.goFile())
 }
 
-func (pac *Package) write(g, c, h io.Writer) error {
+func (pac *Package) prepare() error {
 	if pac.XmlDoc == nil {
 		if err := pac.Load(); err != nil {
 			return err
 		}
 	}
+	for _, st := range pac.Structs {
+		s := pac.newStruct(st)
+		pac.structs[s.GoName()] = &s
+	}
+
+	for _, un := range pac.Unions {
+		u := pac.newUnion(un)
+		pac.unions[u.GoName()] = &u
+	}
+	return nil
+}
+
+func (pac *Package) write(g, c, h io.Writer) error {
 	// C file
 	fp(c, `#include "_cgo_export.h"`)
 	fp(c, "")
@@ -210,61 +238,31 @@ func (pac *Package) write(g, c, h io.Writer) error {
 	fp(g, ")")
 	fp(g, "")
 
-	for _, fn := range pac.Functions {
-		if len(fn.Ellipses) > 0 {
-			continue
-		}
-		// register name
-		pac.globalName(fn)
-	}
-
-	for _, e := range pac.Enumerations {
-		pac.define(g, pac.newEnum(e))
-	}
-
-	for _, v := range pac.Variables {
-		pac.define(g, pac.newVariable(v))
-	}
-
-	for _, s := range pac.Structs {
-		pac.define(g, pac.newStruct(s))
-	}
-
-	for _, s := range pac.Unions {
-		pac.define(g, pac.newUnion(s))
-	}
-
-	for _, d := range pac.Typedefs {
-		td := pac.newTypedef(d)
-		if td.isValid() {
-			pac.define(g, td)
-		}
-	}
-
 	cm := NewSSet()
 	for _, fn := range pac.Functions {
 		if len(fn.Ellipses) > 0 {
 			continue
 		}
-		if !pac.exported(pac.newFunction(fn)) {
+		f := pac.newFunction(fn)
+		if !pac.Exported(f) {
 			continue
 		}
-		f := pac.newFunction(fn)
 		if info, ok := fn.HasCallback(); ok {
 			// Go file
 			callbackFunc := pac.newCallbackFunc(info)
 
 			if !cm.Has(callbackFunc.goFuncName) {
-				callbackFunc.Define(g)
-				fp(g, "")
+				pac.callbacks = append(pac.callbacks, callbackFunc)
 			}
 
-			transFunc := callbackFunc.TransformOriginalFunc(f, info)
-			transFunc.Define(g)
-			fp(g, "")
-			f = pac.newFunction(fn)
-			f.goName += "_"
-			pac.define(g, f)
+			f1, f2 := pac.TransformOriginalFunc(fn, callbackFunc, info)
+			if f.Receiver != nil {
+				f1.Receiver.Object.AddMethod(f1)
+				f2.Receiver.Object.AddMethod(f2)
+			} else {
+				pac.functions.Append(f1)
+				pac.functions.Append(f2)
+			}
 
 			if !cm.Has(callbackFunc.goFuncName) {
 				// H file
@@ -281,8 +279,69 @@ func (pac *Package) write(g, c, h io.Writer) error {
 			// add into set
 			cm.Add(callbackFunc.goFuncName)
 		} else {
-			pac.define(g, f)
+			if f.Receiver != nil {
+				f.Receiver.Object.AddMethod(f)
+			} else {
+				pac.functions.Append(f)
+			}
 		}
+	}
+
+	for _, e := range pac.Enumerations {
+		pac.define(g, pac.newEnum(e))
+	}
+
+	for _, v := range pac.Variables {
+		pac.define(g, pac.newVariable(v))
+	}
+
+	{
+		ns := make([]string, 0, len(pac.structs))
+		for n := range pac.structs {
+			ns = append(ns, n)
+		}
+		sort.Strings(ns)
+		for _, n := range ns {
+			s := pac.structs[n]
+			if !pac.Exported(s) {
+				continue
+			}
+			s.OptimizeNames()
+			s.Define(g)
+		}
+	}
+
+	{
+		ns := make([]string, 0, len(pac.unions))
+		for n := range pac.unions {
+			ns = append(ns, n)
+		}
+		sort.Strings(ns)
+		for _, n := range ns {
+			u := pac.unions[n]
+			if !pac.Exported(u) {
+				continue
+			}
+			u.Define(g)
+		}
+	}
+
+	for _, d := range pac.Typedefs {
+		td := pac.newTypedef(d)
+		if td.isValid() {
+			pac.define(g, td)
+		}
+	}
+
+	for _, f := range pac.functions {
+		if !pac.Exported(f) {
+			continue
+		}
+		f.Define(g)
+	}
+
+	for _, f := range pac.callbacks {
+		f.Define(g)
 	}
 
 	p("Succesfully written to:")
@@ -294,29 +353,23 @@ func (pac *Package) write(g, c, h io.Writer) error {
 	return nil
 }
 
-func (pac *Package) exported(t NamedType) bool {
-	return pac.fileIds.Has(t.File()) && pac.hasPrefix(t.CName())
-}
-
 func (pac *Package) define(w io.Writer, t NamedType) {
-	if pac.exported(t) {
-		if pac.Excluded(t.CName()) {
-			return
-		}
-		fp(w, "// ", t.CName())
-		t.Define(w)
-		fp(w, "")
-		pac.DefCount++
+	if !pac.Exported(t) {
+		return
 	}
+	fp(w, "// ", t.CName())
+	t.Define(w)
+	fp(w, "")
+	pac.DefCount++
 }
 
-func (pac *Package) Excluded(name string) bool {
+func (pac *Package) Exported(t NamedType) bool {
 	for _, n := range pac.From.Excluded {
-		if n == name {
-			return true
+		if n == t.CName() {
+			return false
 		}
 	}
-	return false
+	return pac.fileIds.Has(t.File()) && pac.hasPrefix(t.CName())
 }
 
 // type name that may be declared in this or included packages.

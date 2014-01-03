@@ -161,6 +161,10 @@ func (pac *Package) newEnumValues(enumValues gcc.EnumValues) []EnumValue {
 }
 
 func (pac *Package) newPtrReference(t gcc.Named) Ptr {
+	cgoName := "*C." + t.CName()
+	if n, ok := specialCgoName(t.CName()); ok {
+		cgoName = "*" + n
+	}
 	goName := pac.globalName(t)
 	if goName == "" {
 		goName = "uintptr"
@@ -169,7 +173,7 @@ func (pac *Package) newPtrReference(t gcc.Named) Ptr {
 	}
 	return Ptr{namer{
 		goName:  goName,
-		cgoName: "*C." + t.CName(),
+		cgoName: cgoName,
 	}}
 }
 
@@ -356,7 +360,6 @@ func (pac *Package) newFunction(fn *gcc.Function) Function {
 	if receiver != nil {
 		goParams = goParams[1:]
 		goName = pac.upperName(fn)
-		goName = trimPreSuffix(goName, strings.Trim(receiver.GoTypeName(), "*"))
 	} else {
 		goName = pac.globalName(fn)
 	}
@@ -377,13 +380,20 @@ func (pac *Package) newFunction(fn *gcc.Function) Function {
 	}
 }
 
-func (pac *Package) newFuncArgs(arguments gcc.Arguments) (cArgs Arguments, receiver Param) {
+func (pac *Package) newFuncArgs(arguments gcc.Arguments) (cArgs Arguments, receiver *Receiver) {
 	cArgs = pac.newArgs(arguments, false)
 	if len(cArgs) > 0 &&
 		arguments[0].PtrKind() == gcc.PtrReference &&
 		!contains(cArgs[0].GoTypeName(), ".") &&
 		cArgs[0].GoTypeName() != "uintptr" {
-		receiver = cArgs[0]
+		objName := strings.Trim(cArgs[0].GoTypeName(), "*")
+		if obj, ok := pac.structs[objName]; ok {
+			receiver = &Receiver{cArgs[0], obj}
+		} else if obj, ok := pac.unions[objName]; ok {
+			receiver = &Receiver{cArgs[0], obj}
+		} else {
+			receiver = &Receiver{cArgs[0], nil}
+		}
 	}
 	return
 }
@@ -407,8 +417,12 @@ func (pac *Package) newArg(a *gcc.Argument, callback bool) Argument {
 	}
 }
 
-func (f CallbackFunc) TransformOriginalFunc(oriFunc Function, info *gcc.CallbackInfo) Function {
-	fn := oriFunc
+func (pac *Package) TransformOriginalFunc(
+	oriFunc *gcc.Function,
+	f CallbackFunc,
+	info *gcc.CallbackInfo,
+) (Function, Function) {
+	fn := pac.newFunction(oriFunc)
 	// GoParams
 	{
 		index := info.ArgIndex
@@ -453,7 +467,9 @@ func (f CallbackFunc) TransformOriginalFunc(oriFunc Function, info *gcc.Callback
 			false,
 		}
 	}
-	return fn
+	fn2 := pac.newFunction(oriFunc)
+	fn2.goName += "_"
+	return fn, fn2
 }
 
 func (pac *Package) newCallbackFunc(info *gcc.CallbackInfo) CallbackFunc {
@@ -472,4 +488,12 @@ func (pac *Package) newCallbackFunc(info *gcc.CallbackInfo) CallbackFunc {
 		Return:        returns,
 		CallbackIndex: info.DataIndex,
 	}
+}
+
+func specialCgoName(n string) (string, bool) {
+	switch n {
+	case "__va_list_tag":
+		return "_Ctype_struct___va_list_tag", true
+	}
+	return "", false
 }

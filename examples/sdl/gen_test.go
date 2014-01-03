@@ -24,10 +24,6 @@ var (
 			OtherCode:  "#define _SDL_main_h",
 			NamePrefix: "SDL",
 			Excluded: []string{
-				"SDL_LogMessageV",
-				"SDL_vsnprintf",
-				"SDL_ThreadID",
-				"SDL_GetThreadID",
 			},
 			CgoDirectives: []string{"pkg-config: sdl2"},
 		},
@@ -48,6 +44,7 @@ var (
 )
 
 func Test(*testing.T) {
+	//OutputDir += "reg/"
 	c(ttf.Wrap())
 	c(sdl.Wrap())
 }

@@ -38,5 +38,6 @@ var (
 )
 
 func Test(*testing.T) {
+	//cwrap.OutputDir += "reg/"
 	c(plplot.Wrap())
 }

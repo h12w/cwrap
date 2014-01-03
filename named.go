@@ -89,7 +89,8 @@ func (d Typedef) ToGo(w io.Writer, assign, g, c string) {
 type Struct struct {
 	exported
 	Conv
-	Fields []StructField
+	Fields  []StructField
+	Methods Functions
 }
 
 type StructField struct {
@@ -101,12 +102,34 @@ func (f StructField) Define(w io.Writer) {
 	fp(w, f.GoName, " ", f.GoTypeName)
 }
 
+func (s *Struct) AddMethod(m Function) {
+	s.Methods.AddUnique(m)
+}
+
+func (s *Struct) OptimizeNames() {
+	for i, f := range s.Fields {
+		if s.Methods.Has(f.GoName) {
+			s.Fields[i].GoName += "_"
+		}
+	}
+	for i, f := range s.Methods {
+		newName := trimPreSuffix(f.goName, s.GoName()) // TODO: ???
+		if !s.Methods.Has(newName) {
+			s.Methods[i].goName = newName
+		}
+	}
+}
+
 func (s Struct) Define(w io.Writer) {
+	fp(w, "// ", s.CName())
 	fp(w, "type ", s.GoName(), " struct {")
 	for _, f := range s.Fields {
 		f.Define(w)
 	}
 	fp(w, "}")
+	for _, m := range s.Methods {
+		m.Define(w)
+	}
 }
 
 type Union struct {
@@ -114,12 +137,21 @@ type Union struct {
 	Conv
 	baseGoName string
 	Fields     []UnionField
+	Methods    Functions
+}
+
+func (s *Union) AddMethod(m Function) {
+	s.Methods.AddUnique(m)
 }
 
 func (s Union) Define(w io.Writer) {
+	fp(w, "// ", s.CName())
 	fp(w, "type ", s.GoName(), " ", s.baseGoName)
 	for _, f := range s.Fields {
 		f.Define(w)
+	}
+	for _, m := range s.Methods {
+		m.Define(w)
 	}
 }
 
@@ -176,13 +208,38 @@ func (ps Params) Filter(filter func(i int, a Param) (Param, bool)) (as Params) {
 type Function struct {
 	exported
 	goName   string
-	Receiver Param
+	Receiver *Receiver
 	GoParams Params
 	CArgs    []Argument
 	Return   *Return
 }
 
+type Functions []Function
+
+func (fs *Functions) AddUnique(fn Function) {
+	for _, f := range *fs {
+		if f.CName() == fn.CName() {
+			return
+		}
+	}
+	fs.Append(fn)
+}
+
+func (fs *Functions) Has(goName string) bool {
+	for _, f := range *fs {
+		if f.goName == goName {
+			return true
+		}
+	}
+	return false
+}
+
+func (fs *Functions) Append(f Function) {
+	*fs = append(*fs, f)
+}
+
 func (f Function) Define(w io.Writer) {
+	fp(w, "// ", f.CName())
 	f.signature(w)
 	f.body(w)
 }
@@ -279,16 +336,6 @@ type Argument struct {
 	isOut bool
 }
 
-type Arguments []Argument
-
-func (as Arguments) ToParams() Params {
-	ps := make(Params, len(as))
-	for i, a := range as {
-		ps[i] = a
-	}
-	return ps
-}
-
 func (a Argument) IsOut() bool {
 	return a.isOut
 }
@@ -320,6 +367,30 @@ func (a Argument) CgoTypeName() string {
 func (a Argument) IsReference() bool {
 	_, ok := a.conv.(Ptr)
 	return ok
+}
+
+type Arguments []Argument
+
+func (as Arguments) ToParams() Params {
+	ps := make(Params, len(as))
+	for i, a := range as {
+		ps[i] = a
+	}
+	return ps
+}
+
+type Object interface {
+	GoName() string
+	AddMethod(m Function)
+}
+
+type Receiver struct {
+	Argument
+	Object Object
+}
+
+func (r Receiver) ObjectTypeName() string {
+	return r.Object.GoName()
 }
 
 type Return struct {

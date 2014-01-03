@@ -29,6 +29,8 @@ func checkError(err error) {
 }
 
 func gofmt(file string) error {
+	p("go fmt:")
+	defer p("")
 	return newCmd("go", "fmt", file).exec()
 }
 
