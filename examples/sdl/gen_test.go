@@ -26,7 +26,9 @@ var (
 			Excluded: []string{
 			},
 			CgoDirectives: []string{"pkg-config: sdl2"},
+			BoolTypes:     boolTypes,
 		},
+		TypeRule: typeRule,
 		Included: []*Package{},
 	}
 
@@ -38,13 +40,30 @@ var (
 			File:          "SDL2/SDL_ttf.h",
 			NamePrefix:    "TTF",
 			CgoDirectives: []string{"pkg-config: SDL2_ttf"},
+			BoolTypes:     boolTypes,
 		},
+		TypeRule: typeRule,
 		Included: []*Package{sdl},
+	}
+
+	typeRule = map[string]string{
+		"Uint8":  "byte",
+		"Uint16": "uint16",
+		"Uint32": "uint32",
+		"Uint64": "uint64",
+		"Sint8":  "int8",
+		"Sint16": "int16",
+		"Sint32": "int32",
+		"Sint64": "int64",
+	}
+
+	boolTypes = []string{
+		"SDL_bool",
 	}
 )
 
 func Test(*testing.T) {
-	//OutputDir += "reg/"
+//	OutputDir += "reg/"
 	c(ttf.Wrap())
 	c(sdl.Wrap())
 }

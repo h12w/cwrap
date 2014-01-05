@@ -11,7 +11,6 @@ import (
 	"os"
 	"path"
 	"runtime"
-	"sort"
 	"syscall"
 )
 
@@ -56,15 +55,13 @@ type Package struct {
 	GoFile   string
 	CFile    string
 	HFile    string
+	TypeRule map[string]string
 
 	// Internal
-	localNames map[string]string
-	fileIds    SSet
-	boolSet    SSet
-	structs    map[string]*Struct // Key: go name
-	unions     map[string]*Union  // Key: go name
-	functions  Functions
-	callbacks  []CallbackFunc
+	localNames  map[string]string
+	fileIds     SSet
+	boolSet     SSet
+	typeDeclMap TypeDeclMap
 	Statistics
 	*gcc.XmlDoc
 }
@@ -72,8 +69,7 @@ type Package struct {
 func (pac *Package) Load() (err error) {
 	pac.localNames = make(map[string]string)
 	pac.initBoolSet()
-	pac.structs = make(map[string]*Struct)
-	pac.unions = make(map[string]*Union)
+	pac.typeDeclMap = make(TypeDeclMap)
 	if err := pac.loadXmlDoc(); err != nil {
 		return err
 	}
@@ -121,8 +117,6 @@ func (pac *Package) initFileIds() error {
 	if err != nil {
 		return err
 	}
-	// if includedFiles failed, at least has one file( builtin)
-	fnames = append(fnames, pac.From.FullPath())
 	for _, name := range fnames {
 		for _, file := range pac.XmlDoc.Files {
 			if file.CName() == name {
@@ -201,228 +195,7 @@ func (pac *Package) prepare() error {
 			return err
 		}
 	}
-	for _, st := range pac.Structs {
-		s := pac.newStruct(st)
-		pac.structs[s.GoName()] = &s
-	}
-
-	for _, un := range pac.Unions {
-		u := pac.newUnion(un)
-		pac.unions[u.GoName()] = &u
-	}
 	return nil
-}
-
-func (pac *Package) write(g, c, h io.Writer) error {
-	// C file
-	fp(c, `#include "_cgo_export.h"`)
-	fp(c, "")
-
-	// Go file
-	fp(g, "package ", pac.PacName)
-	fp(g, "")
-	fp(g, "/*")
-	fp(g, "#include <", pac.From.File, ">")
-	fp(g, `#include "`, path.Base(pac.hFile()), `"`)
-	for _, d := range pac.From.CgoDirectives {
-		fp(g, "#cgo ", d)
-	}
-	fp(g, "*/")
-	fp(g, `import "C"`)
-	fp(g, "")
-	fp(g, "import (")
-	fp(g, `"unsafe"`)
-	for _, inc := range pac.Included {
-		fp(g, `"`, inc.PacPath, `"`)
-	}
-	fp(g, ")")
-	fp(g, "")
-
-	cm := NewSSet()
-	for _, fn := range pac.Functions {
-		if len(fn.Ellipses) > 0 {
-			continue
-		}
-		f := pac.newFunction(fn)
-		if !pac.Exported(f) {
-			continue
-		}
-		if info, ok := fn.HasCallback(); ok {
-			// Go file
-			callbackFunc := pac.newCallbackFunc(info)
-
-			if !cm.Has(callbackFunc.goFuncName) {
-				pac.callbacks = append(pac.callbacks, callbackFunc)
-			}
-
-			f1, f2 := pac.TransformOriginalFunc(fn, callbackFunc, info)
-			if f.Receiver != nil {
-				f1.Receiver.Object.AddMethod(f1)
-				f2.Receiver.Object.AddMethod(f2)
-			} else {
-				pac.functions.Append(f1)
-				pac.functions.Append(f2)
-			}
-
-			if !cm.Has(callbackFunc.goFuncName) {
-				// H file
-				fpn(h, "extern ")
-				info.CType.WriteCDecl(h, callbackFunc.cFuncName)
-				fp(h, ";")
-				fp(h, "")
-
-				// C file
-				info.CType.WriteCallbackStub(c, callbackFunc.cFuncName, callbackFunc.goFuncName)
-				fp(c, "")
-			}
-
-			// add into set
-			cm.Add(callbackFunc.goFuncName)
-		} else {
-			if f.Receiver != nil {
-				f.Receiver.Object.AddMethod(f)
-			} else {
-				pac.functions.Append(f)
-			}
-		}
-	}
-
-	for _, e := range pac.Enumerations {
-		pac.define(g, pac.newEnum(e))
-	}
-
-	for _, v := range pac.Variables {
-		pac.define(g, pac.newVariable(v))
-	}
-
-	{
-		ns := make([]string, 0, len(pac.structs))
-		for n := range pac.structs {
-			ns = append(ns, n)
-		}
-		sort.Strings(ns)
-		for _, n := range ns {
-			s := pac.structs[n]
-			if !pac.Exported(s) {
-				continue
-			}
-			s.OptimizeNames()
-			s.Define(g)
-		}
-	}
-
-	{
-		ns := make([]string, 0, len(pac.unions))
-		for n := range pac.unions {
-			ns = append(ns, n)
-		}
-		sort.Strings(ns)
-		for _, n := range ns {
-			u := pac.unions[n]
-			if !pac.Exported(u) {
-				continue
-			}
-			u.Define(g)
-		}
-	}
-
-	for _, d := range pac.Typedefs {
-		td := pac.newTypedef(d)
-		if td.isValid() {
-			pac.define(g, td)
-		}
-	}
-
-	for _, f := range pac.functions {
-		if !pac.Exported(f) {
-			continue
-		}
-		f.Define(g)
-	}
-
-	for _, f := range pac.callbacks {
-		f.Define(g)
-	}
-
-	p("Succesfully written to:")
-	p(pac.goFile())
-	p(pac.cFile())
-	p(pac.hFile())
-	pac.Statistics.Print()
-	p()
-	return nil
-}
-
-func (pac *Package) define(w io.Writer, t NamedType) {
-	if !pac.Exported(t) {
-		return
-	}
-	fp(w, "// ", t.CName())
-	t.Define(w)
-	fp(w, "")
-	pac.DefCount++
-}
-
-func (pac *Package) Exported(t NamedType) bool {
-	for _, n := range pac.From.Excluded {
-		if n == t.CName() {
-			return false
-		}
-	}
-	return pac.fileIds.Has(t.File()) && pac.hasPrefix(t.CName())
-}
-
-// type name that may be declared in this or included packages.
-func (pac *Package) globalName(o gcc.Named) string {
-	if pac.fileIds.Has(o.File()) && pac.hasPrefix(o.CName()) {
-		return pac.localName(o)
-	}
-	for _, inc := range pac.Included {
-		if goName := inc.globalName(o); goName != "" && !contains(goName, ".") {
-			return joins(inc.PacName, ".", goName)
-		}
-	}
-	return ""
-}
-
-// upper name that is unique within the package
-func (pac *Package) localName(o gcc.Named) string {
-	n := pac.upperName(o)
-	if sid, exists := pac.localNames[n]; !exists || o.Id() == sid {
-		pac.localNames[n] = o.Id()
-		return n
-	}
-	for {
-		n += "_"
-		if _, exists := pac.localNames[n]; !exists {
-			break
-		}
-	}
-	pac.localNames[n] = o.Id()
-	return n
-}
-
-// upper camel name
-func (pac *Package) upperName(o gcc.Named) string {
-	return upperName(o.CName(), pac.From.NamePrefix)
-}
-
-// lower camel name
-func (pac *Package) lowerName(o gcc.Named) string {
-	s := snakeToLowerCamel(o.CName())
-	switch s {
-	case "type", "len":
-		s += "_"
-	}
-	return s
-}
-
-func (pac *Package) hasPrefix(s string) bool {
-	return hasPrefix(s, pac.From.NamePrefix)
-}
-
-func (pac *Package) isBool(cTypeName string) bool {
-	return pac.boolSet.Has(cTypeName)
 }
 
 func (pac *Package) GenConst(file string) error {
@@ -453,5 +226,5 @@ type Statistics struct {
 }
 
 func (s Statistics) Print() {
-	p(s.DefCount, "definitions wrapped.")
+	p(s.DefCount, "declarations wrapped.")
 }

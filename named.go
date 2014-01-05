@@ -8,161 +8,201 @@ import (
 	"io"
 )
 
-type NamedType interface {
-	CName() string
-	File() string
-	Define(io.Writer)
-}
-
-type exported struct {
-	cName string
-	file  string
-}
-
-func (e exported) CName() string {
-	return e.cName
-}
-
-func (e exported) File() string {
-	return e.file
-}
-
 type Variable struct {
-	exported
-	Namer
-	conv Conv
+	baseCNamer
+	goName  string
+	cgoName string
+	conv    Conv
 }
 
-func (v Variable) Define(w io.Writer) {
-	fpn(w, "var ")
+func (v *Variable) GoName() string {
+	return v.goName
+}
+
+func (v *Variable) SetGoName(n string) {
+	v.goName = n
+}
+
+func (v *Variable) CgoName() string {
+	return v.cgoName
+}
+
+func (v *Variable) WriteSpec(w io.Writer) {
 	v.conv.ToGo(w, "", v.GoName(), v.CgoName())
 }
 
 type Enum struct {
-	exported
-	Conv
+	baseCNamer
+	baseType
+	SimpleConv
 	baseGoName string
 	Values     []EnumValue
 }
 
-func (e Enum) Define(w io.Writer) {
-	fp(w, "type ", e.GoName(), " ", e.baseGoName)
+func (*Enum) WriteMethods(io.Writer) {
+}
+
+func (e *Enum) WriteSpec(w io.Writer) {
+	fp(w, e.baseGoName)
 	fp(w, "const (")
 	for _, v := range e.Values {
-		v.Define(w)
+		v.Declare(w)
 	}
 	fp(w, ")")
 }
 
 type EnumValue struct {
-	GoName string
-	Value  int
+	baseCNamer
+	goName string
+	value  int
 }
 
-func (v EnumValue) Define(w io.Writer) {
-	fp(w, v.GoName, "=", v.Value)
+func (v *EnumValue) GoName() string {
+	return v.goName
+}
+
+func (v *EnumValue) Declare(w io.Writer) {
+	fp(w, v.goName, "=", v.value)
 }
 
 type Typedef struct {
-	exported
-	Namer
-	baseGoName string
-	convFunc   func(io.Writer, string, string, string, string)
+	baseCNamer
+	baseType
+	literal  SpecWriter
+	convFunc func(io.Writer, string, string, string, string)
+	receiver
+	rootId string
 }
 
-func (d Typedef) Define(w io.Writer) {
-	fp(w, "type ", d.GoName(), " ", d.baseGoName)
+func (d *Typedef) GoName() string {
+	if d.goName == "" {
+		return d.Root().GoName()
+	}
+	return d.goName
 }
 
-func (d Typedef) isValid() bool {
-	return d.baseGoName != ""
+func (d *Typedef) Root() Type {
+	switch t := d.literal.(type) {
+	case *Typedef:
+		return t.Root()
+	}
+	return d.literal.(Type)
 }
 
-func (d Typedef) ToCgo(w io.Writer, assign, g, c string) {
+func (d *Typedef) OptimizeNames() {
+	d.receiver.OptimizeNames(d.GoName())
+	if o, ok := d.literal.(NameOptimizer); ok {
+		o.OptimizeNames()
+	}
+}
+
+func (d *Typedef) WriteSpec(w io.Writer) {
+	d.literal.WriteSpec(w)
+}
+
+func (d *Typedef) WriteMethods(w io.Writer) {
+	if u, ok := d.literal.(*Union); ok {
+		goName := u.GoName()
+		u.SetGoName(d.GoName())
+		u.WriteMethods(w)
+		u.SetGoName(goName)
+	}
+	d.receiver.WriteMethods(w)
+}
+
+func (d *Typedef) ToCgo(w io.Writer, assign, g, c string) {
 	d.convFunc(w, assign, g, c, d.CgoName())
 }
 
-func (d Typedef) ToGo(w io.Writer, assign, g, c string) {
+func (d *Typedef) ToGo(w io.Writer, assign, g, c string) {
 	d.convFunc(w, assign, c, g, d.GoName())
 }
 
-type Struct struct {
-	exported
-	Conv
-	Fields  []StructField
-	Methods Functions
+type receiver struct {
+	Methods
 }
 
-type StructField struct {
-	GoName     string
-	GoTypeName string
-}
-
-func (f StructField) Define(w io.Writer) {
-	fp(w, f.GoName, " ", f.GoTypeName)
-}
-
-func (s *Struct) AddMethod(m Function) {
+func (s *receiver) AddMethod(m *Method) {
 	s.Methods.AddUnique(m)
+}
+
+func (s *receiver) WriteMethods(w io.Writer) {
+	for _, m := range s.Methods {
+		m.Declare(w)
+	}
+}
+
+func (s *receiver) OptimizeNames(typeName string) {
+	for i, m := range s.Methods {
+		newName := trimPreSuffix(m.GoName(), typeName)
+		if newName != "" && !s.Methods.Has(newName) {
+			s.Methods[i].SetGoName(newName)
+		}
+	}
+}
+
+type Struct struct {
+	baseCNamer
+	baseType
+	ValueConv
+	Fields []StructField
+	receiver
 }
 
 func (s *Struct) OptimizeNames() {
 	for i, f := range s.Fields {
-		if s.Methods.Has(f.GoName) {
-			s.Fields[i].GoName += "_"
+		if s.Methods.Has(f.goName) {
+			s.Fields[i].goName += "_"
 		}
 	}
-	for i, f := range s.Methods {
-		newName := trimPreSuffix(f.goName, s.GoName()) // TODO: ???
-		if !s.Methods.Has(newName) {
-			s.Methods[i].goName = newName
-		}
-	}
+	s.receiver.OptimizeNames(s.GoName())
 }
 
-func (s Struct) Define(w io.Writer) {
-	fp(w, "// ", s.CName())
-	fp(w, "type ", s.GoName(), " struct {")
+func (s *Struct) WriteSpec(w io.Writer) {
+	fp(w, "struct {")
 	for _, f := range s.Fields {
-		f.Define(w)
+		f.Declare(w)
 	}
 	fp(w, "}")
-	for _, m := range s.Methods {
-		m.Define(w)
-	}
+}
+
+type StructField struct {
+	goName string
+	Type   GoNamer
+}
+
+func (f *StructField) Declare(w io.Writer) {
+	fp(w, f.goName, " ", f.Type.GoName())
 }
 
 type Union struct {
-	exported
-	Conv
-	baseGoName string
-	Fields     []UnionField
-	Methods    Functions
+	baseCNamer
+	baseType
+	ValueConv
+	size   int
+	Fields []UnionField
+	receiver
 }
 
-func (s *Union) AddMethod(m Function) {
-	s.Methods.AddUnique(m)
-}
-
-func (s Union) Define(w io.Writer) {
-	fp(w, "// ", s.CName())
-	fp(w, "type ", s.GoName(), " ", s.baseGoName)
+func (s *Union) WriteMethods(w io.Writer) {
 	for _, f := range s.Fields {
-		f.Define(w)
+		f.Declare(w)
 	}
-	for _, m := range s.Methods {
-		m.Define(w)
-	}
+	s.receiver.WriteMethods(w)
+}
+
+func (s *Union) WriteSpec(w io.Writer) {
+	fp(w, "[", s.size, "]byte")
 }
 
 type UnionField struct {
-	goName      string
-	goTypeName  string
-	unionGoName string
-	size        uintptr
+	goName string
+	Type   GoNamer
+	size   uintptr
+	union  *Union
 }
 
-func (f UnionField) Define(w io.Writer) {
+func (f *UnionField) Declare(w io.Writer) {
 	if f.size <= MachineSize {
 		f.defineValueGetter(w)
 	} else {
@@ -170,258 +210,16 @@ func (f UnionField) Define(w io.Writer) {
 	}
 }
 
-func (f UnionField) defineValueGetter(w io.Writer) {
-	fp(w, "func (u *", f.unionGoName, ")", f.goName, "() ",
-		f.goTypeName, "{")
-	fp(w, "return ", "*(*", f.goTypeName, ")(unsafe.Pointer(u))")
+func (f *UnionField) defineValueGetter(w io.Writer) {
+	fp(w, "func (u *", f.union.GoName(), ")", f.goName, "() ",
+		f.Type.GoName(), "{")
+	fp(w, "return ", "*(*", f.Type.GoName(), ")(unsafe.Pointer(u))")
 	fp(w, "}")
 }
 
-func (f UnionField) definePtrGetter(w io.Writer) {
-	fp(w, "func (u *", f.unionGoName, ")", f.goName, "() *",
-		f.goTypeName, "{")
-	fp(w, "return ", "(*", f.goTypeName, ")(unsafe.Pointer(u))")
+func (f *UnionField) definePtrGetter(w io.Writer) {
+	fp(w, "func (u *", f.union.GoName(), ")", f.goName, "() *",
+		f.Type.GoName(), "{")
+	fp(w, "return ", "(*", f.Type.GoName(), ")(unsafe.Pointer(u))")
 	fp(w, "}")
-}
-
-type Param interface {
-	GoName() string
-	CgoName() string
-	GoTypeName() string
-	CgoTypeName() string
-	IsOut() bool
-	ToCgo(w io.Writer, assign string)
-	ToGo(w io.Writer, assign string)
-}
-
-type Params []Param
-
-func (ps Params) Filter(filter func(i int, a Param) (Param, bool)) (as Params) {
-	for i, a := range ps {
-		if fa, ok := filter(i, a); ok {
-			as = append(as, fa)
-		}
-	}
-	return
-}
-
-type Function struct {
-	exported
-	goName   string
-	Receiver *Receiver
-	GoParams Params
-	CArgs    []Argument
-	Return   *Return
-}
-
-type Functions []Function
-
-func (fs *Functions) AddUnique(fn Function) {
-	for _, f := range *fs {
-		if f.CName() == fn.CName() {
-			return
-		}
-	}
-	fs.Append(fn)
-}
-
-func (fs *Functions) Has(goName string) bool {
-	for _, f := range *fs {
-		if f.goName == goName {
-			return true
-		}
-	}
-	return false
-}
-
-func (fs *Functions) Append(f Function) {
-	*fs = append(*fs, f)
-}
-
-func (f Function) Define(w io.Writer) {
-	fp(w, "// ", f.CName())
-	f.signature(w)
-	f.body(w)
-}
-
-func (f Function) signature(w io.Writer) {
-	fpn(w, "func ")
-	if f.Receiver != nil {
-		goParamDeclList(w, f.Receiver)
-	}
-	fpn(w, f.goName)
-	goParamDeclList(w, f.GoParams.In()...)
-	goParamDeclList(w, f.GoParams.Out()...)
-}
-
-func (f Function) body(w io.Writer) {
-	fp(w, "{")
-	f.initCArgs(w)
-	f.cgoCall(w)
-	f.returns(w)
-	fp(w, "}")
-}
-
-func (f Function) returns(w io.Writer) {
-	if f.Return != nil {
-		f.Return.ToGo(w, "")
-	}
-	if len(f.GoParams.Out()) > 0 {
-		fp(w, "return")
-	}
-}
-
-func (ps Params) In() Params {
-	return ps.Filter(func(i int, a Param) (Param, bool) {
-		if a.IsOut() {
-			return a, false
-		}
-		return a, true
-	})
-}
-
-func (ps Params) Out() Params {
-	return ps.Filter(func(i int, a Param) (Param, bool) {
-		if a.IsOut() {
-			return a, true
-		}
-		return a, false
-	})
-}
-
-func goParamDeclList(w io.Writer, ds ...Param) {
-	fpn(w, "(")
-	for _, d := range ds {
-		fpn(w, d.GoName(), " ", d.GoTypeName(), ",")
-	}
-	fpn(w, ")")
-}
-
-func goParamDeclListTypeOnly(w io.Writer, ds ...Param) {
-	fpn(w, "(")
-	for _, d := range ds {
-		fpn(w, d.GoTypeName(), ",")
-	}
-	fpn(w, ")")
-}
-
-func cgoParamDeclList(w io.Writer, ds ...Param) {
-	fpn(w, "(")
-	for _, d := range ds {
-		fpn(w, d.CgoName(), " ", d.CgoTypeName(), ",")
-	}
-	fpn(w, ")")
-}
-
-func (f Function) initCArgs(w io.Writer) {
-	for _, a := range f.CArgs {
-		a.ToCgo(w, ":")
-	}
-}
-
-func (f Function) cgoCall(w io.Writer) {
-	if f.Return != nil {
-		fpn(w, f.Return.CgoName(), ":=")
-	}
-	fpn(w, "C.", f.CName(), "(")
-	for _, a := range f.CArgs {
-		fpn(w, a.CgoName(), ",")
-	}
-	fp(w, ")")
-}
-
-type Argument struct {
-	namer
-	conv  Conv
-	isOut bool
-}
-
-func (a Argument) IsOut() bool {
-	return a.isOut
-}
-
-func (a Argument) ToCgo(w io.Writer, assign string) {
-	a.conv.ToCgo(w, assign, a.GoName(), a.CgoName())
-}
-
-func (a Argument) ToGo(w io.Writer, assign string) {
-	a.conv.ToGo(w, assign, a.GoName(), a.CgoName())
-}
-
-func (a Argument) CgoName() string {
-	return a.cgoName
-}
-
-func (a Argument) GoName() string {
-	return a.goName
-}
-
-func (a Argument) GoTypeName() string {
-	return a.conv.GoName()
-}
-
-func (a Argument) CgoTypeName() string {
-	return a.conv.CgoName()
-}
-
-func (a Argument) IsReference() bool {
-	_, ok := a.conv.(Ptr)
-	return ok
-}
-
-type Arguments []Argument
-
-func (as Arguments) ToParams() Params {
-	ps := make(Params, len(as))
-	for i, a := range as {
-		ps[i] = a
-	}
-	return ps
-}
-
-type Object interface {
-	GoName() string
-	AddMethod(m Function)
-}
-
-type Receiver struct {
-	Argument
-	Object Object
-}
-
-func (r Receiver) ObjectTypeName() string {
-	return r.Object.GoName()
-}
-
-type Return struct {
-	goName string
-	conv   Conv
-}
-
-func (f Return) IsOut() bool {
-	return true // useless
-}
-
-func (r Return) ToGo(w io.Writer, assign string) {
-	r.conv.ToGo(w, assign, r.GoName(), r.CgoName())
-}
-
-func (r Return) ToCgo(w io.Writer, assign string) {
-	r.conv.ToCgo(w, assign, r.GoName(), r.CgoName())
-}
-
-func (r Return) GoName() string {
-	return r.goName
-}
-
-func (r Return) CgoName() string {
-	return "_" + r.GoName()
-}
-
-func (r Return) GoTypeName() string {
-	return r.conv.GoName()
-}
-
-func (r Return) CgoTypeName() string {
-	return r.conv.CgoName()
 }

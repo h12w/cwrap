@@ -7,8 +7,8 @@ package cwrap
 import (
 	"fmt"
 	gcc "github.com/hailiang/go-gccxml"
+	"io"
 	"reflect"
-	"strings"
 )
 
 var goNumMap = initNumMap()
@@ -33,45 +33,73 @@ func initNumMap() map[gcc.NumInfo]string {
 	return goNumMap
 }
 
-func (pac *Package) getNamer(gt gcc.Type) Namer {
+func (pac *Package) getType(gt gcc.Type, declare bool) Type {
+	if t, ok := pac.typeDeclMap[gt.Id()]; ok {
+		return t
+	}
+	// hard rule
+	if nt, ok := gt.(gcc.Named); ok {
+		if n, ok := pac.TypeRule[nt.CName()]; ok {
+			return newNum_(n, cgoName(nt.CName()))
+		}
+	}
 	switch t := gt.(type) {
 	case *gcc.FundamentalType:
 		if t.CName() == "void" {
-			return namer{}
+			return &Void{}
 		} else {
 			return newNum(t)
 		}
 	case *gcc.Enumeration:
-		return pac.newEnum(t)
+		r := newEnum(t)
+		if declare {
+			pac.declare(r)
+		}
+		return r
 	case *gcc.ArrayType:
 		return pac.newArray(t)
 	case *gcc.Struct:
-		return pac.newStructNamer(t)
+		r := newStructWithoutFields(t)
+		if declare {
+			pac.declare(r)
+		}
+		return r
 	case *gcc.Union:
-		return pac.newUnionNamer(t)
+		r := newUnionWithoutFields(t)
+		if declare {
+			pac.declare(r)
+		}
+		return r
 	case *gcc.PointerType:
 		return pac.newPtr(t.PointedType())
 	case *gcc.Typedef:
-		return pac.newTypedef(t)
+		r := pac.newTypedef(t)
+		if IsVoid(r.literal) {
+			return &Void{}
+		}
+		if declare {
+			pac.declare(r)
+		}
+		return r
 	case *gcc.FunctionType:
-		return namer{"", "[0]byte"}
+		return &baseType{"", "[0]byte"}
 	case gcc.Aliased:
-		return pac.getNamer(t.Base())
+		return pac.declareType(t.Base())
 	case *gcc.Unimplemented:
-		return namer{}
+		return &baseType{}
 	}
 	panic(fmt.Errorf("Unkown type from gccxml: %v, %v.", reflect.TypeOf(gt), gt))
 }
 
-func (pac *Package) getConv(gt gcc.Type, ptrKind gcc.PtrKind, callback bool) Conv {
+func (pac *Package) declareType(gt gcc.Type) Type {
+	return pac.getType(gt, true)
+}
+
+func (pac *Package) getConv(gt gcc.Type, ptrKind gcc.PtrKind) Conv {
 	if ptrKind == gcc.NotSet {
-		n := pac.getNamer(gt)
+		n := pac.declareType(gt)
 		if named, ok := gt.(gcc.Named); ok && pac.isBool(named.CName()) {
-			return Bool{n.CgoName()}
-		}
-		switch n.GoName() {
-		case "int32", "uint32":
-			return Simple{namer{"int", n.CgoName()}}
+			return newBool(n.CgoName())
 		}
 		if argType, ok := n.(Conv); ok {
 			return argType
@@ -84,25 +112,57 @@ func (pac *Package) getConv(gt gcc.Type, ptrKind gcc.PtrKind, callback bool) Con
 		case gcc.PtrArrayArray:
 			return pac.newSliceSlice(pt.PointedType())
 		case gcc.PtrStringArray:
-			return StringSlice{}
+			return newStringSlice()
 		case gcc.PtrString:
-			return String{}
+			return newString()
 		case gcc.PtrTypedef:
-			return pac.newPtrTypedef(gt.(*gcc.Typedef)) // Note: gt not pt.
-		case gcc.PtrReference:
-			if s, ok := gcc.ToComposite(pt.PointedType()); ok {
-				return pac.newPtrReference(s)
-			}
+			return pac.declareType(gt).(Conv)
 		case gcc.PtrReturn:
-			if callback {
-				return pac.newCallbackReturnPtr(pt.PointedType())
-			} else {
-				return pac.newReturnPtr(pt.PointedType())
-			}
+			return pac.newReturnPtr(pt.PointedType())
 		}
 		return pac.newPtr(pt.PointedType())
 	}
 	panic("Should not goes here.")
+}
+
+func (pac *Package) newFunction(fn *gcc.Function) *Function {
+	cArgs := pac.newArgs(fn.Arguments)
+	goParams := cArgs.ToParams()
+	returns := pac.newReturn(fn.ReturnType())
+	if returns != nil {
+		goParams = append(goParams, returns)
+	}
+	f := &Function{
+		baseCNamer: newExported(fn),
+		FuncType: FuncType{
+			GoParams: goParams,
+			CArgs:    cArgs,
+			Return:   returns,
+		},
+	}
+
+	return f
+}
+
+func (pac *Package) newArgs(arguments gcc.Arguments) (args Arguments) {
+	for _, a := range arguments {
+		args = append(args, pac.newArg(a))
+	}
+	return args
+}
+
+func (pac *Package) newArg(a *gcc.Argument) *Argument {
+	goName := lowerName(a)
+	return &Argument{
+		baseParam{
+			baseType{
+				goName,
+				"_" + goName,
+			},
+			pac.getConv(a.CType(), a.PtrKind()),
+		},
+		a.PtrKind() == gcc.PtrReturn,
+	}
 }
 
 func (pac *Package) newReturn(gt gcc.Type) *Return {
@@ -111,324 +171,162 @@ func (pac *Package) newReturn(gt gcc.Type) *Return {
 	}
 	var t Conv
 	if gcc.IsCString(gt) {
-		t = String{}
-	} else if n, ok := pac.getNamer(gt).(Conv); ok {
-		t = n
+		t = newString()
+	} else {
+		t = pac.getConv(gt, gcc.NotSet)
 	}
-	switch t.GoName() {
-	case "int32", "uint32":
-		t = Simple{namer{"int", t.CgoName()}}
-	}
-	return &Return{"ret", t}
+	return &Return{baseParam{baseType{"ret", "_ret"}, t}}
 }
 
-func newNum(t *gcc.FundamentalType) Conv {
-	return Simple{namer{
+func newNum(t *gcc.FundamentalType) *Num {
+	return &Num{SimpleConv{&baseType{
 		goName:  goNumMap[gcc.NumInfoFromGccName(t.CName())],
 		cgoName: gcc.NumCgoNameFromGccName(t.CName()),
-	}}
+	}}}
+}
+
+func newNum_(goName, cgoName string) *Num {
+	return &Num{SimpleConv{&baseType{goName, cgoName}}}
 }
 
 func (pac *Package) newArray(t *gcc.ArrayType) Conv {
-	elem := pac.getNamer(t.ElementType())
-	return Value{namer{
-		goName:  sprint("[", t.Len(), "]", elem.GoName()),
-		cgoName: sprint("[", t.Len(), "]", elem.CgoName()),
-	}}
+	return ValueConv{&Array{pac.declareType(t.ElementType()), t.Len()}}
 }
 
-func (pac *Package) newEnum(t *gcc.Enumeration) Enum {
-	return Enum{
-		exported: exported{
-			cName: t.CName(),
-			file:  t.File(),
+func newEnum(t *gcc.Enumeration) *Enum {
+	e := &Enum{
+		baseType: baseType{
+			cgoName: cgoName(t.CName()),
 		},
-		Conv: Simple{namer{
-			goName:  pac.globalName(t),
-			cgoName: "C." + t.CName(),
-		}},
+		baseCNamer: newExported(t),
 		baseGoName: goNumMap[gcc.NumInfo{gcc.SignedInt, t.Size()}],
-		Values:     pac.newEnumValues(t.EnumValues),
+		Values:     newEnumValues(t.EnumValues),
 	}
+	e.SimpleConv = SimpleConv{e}
+	return e
 }
 
-func (pac *Package) newEnumValues(enumValues gcc.EnumValues) []EnumValue {
+func newEnumValues(enumValues gcc.EnumValues) []EnumValue {
 	vs := make([]EnumValue, len(enumValues))
 	for i, v := range enumValues {
-		vs[i] = EnumValue{pac.localName(v), v.Init()}
+		vs[i] = EnumValue{
+			baseCNamer: newExported(v),
+			value:      v.Init(),
+		}
 	}
 	return vs
 }
 
-func (pac *Package) newPtrReference(t gcc.Named) Ptr {
-	cgoName := "*C." + t.CName()
-	if n, ok := specialCgoName(t.CName()); ok {
-		cgoName = "*" + n
+func newExported(t gcc.Named) baseCNamer {
+	return baseCNamer{
+		id:    t.Id(),
+		cName: t.CName(),
+		file:  t.File(),
 	}
-	goName := pac.globalName(t)
-	if goName == "" {
-		goName = "uintptr"
-	} else {
-		goName = "*" + goName
-	}
-	return Ptr{namer{
-		goName:  goName,
-		cgoName: cgoName,
-	}}
 }
 
-func (pac *Package) newPtrTypedef(t gcc.Named) Ptr {
-	goName := pac.globalName(t)
-	if goName == "" {
-		goName = "uintptr"
-	}
-	return Ptr{namer{
-		goName:  goName,
-		cgoName: "C." + t.CName(),
-	}}
+func (pac *Package) newPtr(t gcc.Type) *Ptr {
+	return &Ptr{pac.declareType(t)}
 }
 
-func (pac *Package) newPtr(t gcc.Type) Conv {
-	n := pac.getNamer(t)
-	if gcc.IsVoid(t) {
-		return Simple{namer{
-			goName:  "uintptr",
-			cgoName: "unsafe.Pointer",
-		}}
-	}
-	goName, cgoName := n.GoName(), n.CgoName()
-	if goName == "" {
-		goName = "uintptr"
-	} else {
-		goName = "*" + goName
-	}
-	if cgoName == "" {
-		cgoName = "unsafe.Pointer"
-	} else {
-		cgoName = "*" + cgoName
-	}
-	return Ptr{namer{
-		goName:  goName,
-		cgoName: cgoName,
-	}}
+func (pac *Package) newReturnPtr(t gcc.Type) *ReturnPtr {
+	return &ReturnPtr{pac.declareType(t)}
 }
 
-func (pac *Package) newReturnPtr(t gcc.Type) ReturnPtr {
-	et := pac.getNamer(t)
-	return ReturnPtr{namer{
-		goName:  et.GoName(),
-		cgoName: "*" + et.CgoName(),
-	}}
-}
-
-func (pac *Package) newCallbackReturnPtr(t gcc.Type) CallbackReturnPtr {
-	et := pac.getNamer(t)
-	return CallbackReturnPtr{namer{
-		goName:  et.GoName(),
-		cgoName: "*" + et.CgoName(),
-	}}
-}
-
-func (pac *Package) newSliceSlice(t gcc.Type) SliceSlice {
+func (pac *Package) newSliceSlice(t gcc.Type) *SliceSlice {
 	pt, _ := gcc.ToPointer(t)
-	et := pac.getNamer(pt.PointedType())
-	return SliceSlice{
-		goName:  "[]" + et.GoName(),
-		cgoName: "*" + et.CgoName(),
-	}
+	return &SliceSlice{Slice{pac.declareType(pt.PointedType())}}
 }
 
-func (pac *Package) newSlice(t gcc.Type) Slice {
-	et := pac.getNamer(t)
-	return Slice{namer{
-		goName:  "[]" + et.GoName(),
-		cgoName: "*" + et.CgoName(),
-	}}
+func (pac *Package) newSlice(t gcc.Type) *Slice {
+	return &Slice{pac.declareType(t)}
 }
 
-func (pac *Package) newStruct(t *gcc.Struct) Struct {
-	s := pac.newStructNamer(t)
-	s.Fields = pac.newStructFields(t.Fields())
-	return s
-}
-
-func (pac *Package) newStructNamer(t *gcc.Struct) Struct {
-	return Struct{
-		exported: exported{
-			cName: t.CName(),
-			file:  t.File(),
+func newStructWithoutFields(t *gcc.Struct) *Struct {
+	s := &Struct{
+		baseCNamer: newExported(t),
+		baseType: baseType{
+			cgoName: cgoName(t.CName()),
 		},
-		Conv: Value{namer{
-			goName:  pac.globalName(t),
-			cgoName: "C." + t.CName(),
-		}},
 	}
+	s.ValueConv = ValueConv{s}
+	return s
 }
 
 func (pac *Package) newStructFields(fields gcc.Fields) []StructField {
 	fs := make([]StructField, len(fields))
 	for i, f := range fields {
-		fs[i] = StructField{pac.upperName(f), pac.getNamer(f.CType()).GoName()}
+		fs[i] = StructField{upperName(f.CName(), ""), pac.declareType(f.CType())}
 	}
 	return fs
 }
 
-func (pac *Package) newTypedef(t *gcc.Typedef) Typedef {
-	baseGoName := pac.getNamer(t.Base()).GoName()
-	goName := baseGoName
-	if t.IsComposite() {
-		goName = pac.globalName(t.Root().(gcc.Named))
-	} else if n := pac.globalName(t); n != "" {
-		goName = n
-	}
+func (pac *Package) newTypedef(t *gcc.Typedef) *Typedef {
+	literal := pac.getType(t.Base(), false)
 	convFunc := convValue
 	if t.IsFundamental() {
 		convFunc = conv
 	} else if t.IsPointer() {
 		convFunc = convPtr
 	}
-	if t.IsComposite() || t.IsFuncType() {
-		return Typedef{ // no need to define it, just name it and provide conversion.
-			Namer: namer{
-				goName:  goName,
-				cgoName: "C." + t.CName(),
-			},
-			convFunc: convFunc,
-		}
-	}
-	return Typedef{
-		exported: exported{
-			cName: t.CName(),
-			file:  t.File(),
+	td := &Typedef{
+		baseCNamer: newExported(t),
+		baseType: baseType{
+			cgoName: cgoName(t.CName()),
 		},
-		Namer: namer{
-			goName:  goName,
-			cgoName: "C." + t.CName(),
-		},
-		baseGoName: baseGoName,
-		convFunc:   convFunc,
+		literal:  literal,
+		convFunc: convFunc,
+		rootId:   t.Root().Id(),
 	}
+	return td
 }
 
-func (pac *Package) newUnion(t *gcc.Union) Union {
-	s := pac.newUnionNamer(t)
-	s.Fields = pac.newUnionFields(t.Fields(), s.GoName())
-	return s
-}
-
-func (pac *Package) newUnionNamer(t *gcc.Union) Union {
-	return Union{
-		exported: exported{
-			cName: t.CName(),
-			file:  t.File(),
+func newUnionWithoutFields(t *gcc.Union) *Union {
+	u := &Union{
+		baseCNamer: newExported(t),
+		baseType: baseType{
+			cgoName: cgoName(t.CName()),
 		},
-		Conv: Value{namer{
-			goName:  pac.globalName(t),
-			cgoName: "C." + t.CName(),
-		}},
-		baseGoName: sprint("[", t.Size()/8, "]byte"),
+		size: t.Size() / 8,
 	}
+	u.ValueConv = ValueConv{u}
+	return u
 }
 
-func (pac *Package) newUnionFields(fields gcc.Fields, unionGoName string) []UnionField {
+func (pac *Package) newUnionFields(fields gcc.Fields, union *Union) []UnionField {
 	fs := make([]UnionField, len(fields))
 	for i, f := range fields {
-		fs[i] = UnionField{pac.upperName(f), pac.getNamer(f.CType()).GoName(),
-			unionGoName, uintptr(f.CType().Size() / 8)}
+		fs[i] = UnionField{upperName(f.CName(), ""), pac.declareType(f.CType()),
+			uintptr(f.CType().Size() / 8), union}
 	}
 	return fs
 }
 
-func (pac *Package) newVariable(t *gcc.Variable) Variable {
-	return Variable{
-		exported: exported{
-			cName: t.CName(),
-			file:  t.File(),
-		},
-		Namer: namer{
-			goName:  pac.globalName(t),
-			cgoName: "C." + t.CName(),
-		},
-		conv: pac.getNamer(t.CType()).(Conv),
+func (pac *Package) newVariable(t *gcc.Variable) *Variable {
+	v := &Variable{
+		baseCNamer: newExported(t),
+		cgoName:    cgoName(t.CName()),
+		conv:       pac.declareType(t.CType()).(Conv),
 	}
+	return v
 }
 
-func (pac *Package) newFunction(fn *gcc.Function) Function {
-	cArgs, receiver := pac.newFuncArgs(fn.Arguments)
-	goName := ""
-	goParams := cArgs.ToParams()
-	if receiver != nil {
-		goParams = goParams[1:]
-		goName = pac.upperName(fn)
-	} else {
-		goName = pac.globalName(fn)
-	}
-	returns := pac.newReturn(fn.ReturnType())
-	if returns != nil {
-		goParams = append(goParams, returns)
-	}
-	return Function{
-		exported: exported{
-			cName: fn.CName(),
-			file:  fn.File(),
-		},
-		goName:   goName,
-		Receiver: receiver,
-		GoParams: goParams,
-		CArgs:    cArgs,
-		Return:   returns,
-	}
-}
-
-func (pac *Package) newFuncArgs(arguments gcc.Arguments) (cArgs Arguments, receiver *Receiver) {
-	cArgs = pac.newArgs(arguments, false)
-	if len(cArgs) > 0 &&
-		arguments[0].PtrKind() == gcc.PtrReference &&
-		!contains(cArgs[0].GoTypeName(), ".") &&
-		cArgs[0].GoTypeName() != "uintptr" {
-		objName := strings.Trim(cArgs[0].GoTypeName(), "*")
-		if obj, ok := pac.structs[objName]; ok {
-			receiver = &Receiver{cArgs[0], obj}
-		} else if obj, ok := pac.unions[objName]; ok {
-			receiver = &Receiver{cArgs[0], obj}
-		} else {
-			receiver = &Receiver{cArgs[0], nil}
-		}
-	}
-	return
-}
-
-func (pac *Package) newArgs(arguments gcc.Arguments, callback bool) (args Arguments) {
-	for _, a := range arguments {
-		args = append(args, pac.newArg(a, callback))
-	}
-	return args
-}
-
-func (pac *Package) newArg(a *gcc.Argument, callback bool) Argument {
-	goName := pac.lowerName(a)
-	return Argument{
-		namer{
-			goName,
-			"_" + goName,
-		},
-		pac.getConv(a.CType(), a.PtrKind(), callback),
-		a.PtrKind() == gcc.PtrReturn,
-	}
+func newBool(cgoName string) *Bool {
+	return &Bool{baseType{
+		"bool",
+		cgoName,
+	}}
 }
 
 func (pac *Package) TransformOriginalFunc(
 	oriFunc *gcc.Function,
 	f CallbackFunc,
 	info *gcc.CallbackInfo,
-) (Function, Function) {
+) (*Function, *Function) {
 	fn := pac.newFunction(oriFunc)
 	// GoParams
 	{
 		index := info.ArgIndex
-		if fn.Receiver != nil {
-			index--
-		}
 		ps, nps := fn.GoParams, Params{}
 		if index > 0 {
 			nps = ps[:index]
@@ -444,50 +342,72 @@ func (pac *Package) TransformOriginalFunc(
 	// CArgs
 	{
 		ca, da := fn.CArgs[info.ArgIndex], fn.CArgs[info.ArgIndex+1]
-		fn.CArgs[info.ArgIndex] = Argument{
-			namer{
-				"C." + trimSuffix(f.goFuncName, "_Go") + "_C",
-				ca.CgoName(),
-			},
-			Simple{namer{
-				goName:  "",
-				cgoName: ca.CgoTypeName(),
-			}},
-			false,
-		}
-		fn.CArgs[info.ArgIndex+1] = Argument{
-			namer{
-				"&" + ca.GoName(),
-				da.CgoName(),
-			},
-			Simple{namer{
-				goName:  "",
-				cgoName: da.CgoTypeName(),
-			}},
-			false,
-		}
+		da.goName = "&" + ca.GoName()
+		ca.goName = cgoName(trimSuffix(f.goName, "_Go") + "_C")
+		fn.CArgs[info.ArgIndex], fn.CArgs[info.ArgIndex+1] = ca, da
+		ca.isOut, da.isOut = false, false
 	}
 	fn2 := pac.newFunction(oriFunc)
-	fn2.goName += "_"
+	fn2.id += "_original"
 	return fn, fn2
 }
 
 func (pac *Package) newCallbackFunc(info *gcc.CallbackInfo) CallbackFunc {
-	callbackName := snakeToLowerCamel(upperName(info.CName, pac.From.NamePrefix)) + "Callback"
-	cArgs := pac.newArgs(info.CType.Arguments, true)
+	callbackName := snakeToLowerCamel(pac.upperName(info.CName)) + "Callback"
+	cArgs := pac.newArgs(info.CType.Arguments)
+	for i, a := range cArgs {
+		if r, ok := a.conv.(*ReturnPtr); ok {
+			cArgs[i].conv = &CallbackReturnPtr{r}
+		}
+	}
 	returns := pac.newReturn(info.CType.ReturnType())
 	goParams := cArgs.ToParams()
 	if returns != nil {
 		goParams = append(goParams, returns)
 	}
 	return CallbackFunc{
-		goFuncName:    callbackName + "_Go",
+		goName:        callbackName + "_Go",
 		cFuncName:     callbackName + "_C",
-		GoParams:      goParams,
-		CArgs:         cArgs,
-		Return:        returns,
 		CallbackIndex: info.DataIndex,
+		FuncType: FuncType{
+			GoParams: goParams,
+			CArgs:    cArgs,
+			Return:   returns,
+		},
 	}
+}
+
+type CallbackReturnPtr struct {
+	*ReturnPtr
+}
+
+func (s CallbackReturnPtr) ToCgo(w io.Writer, assign, g, c string) {
+	conv(w, assign, g, "*"+c, s.pointedType.CgoName())
+}
+
+// lower camel name
+func lowerName(o gcc.Named) string {
+	s := snakeToLowerCamel(o.CName())
+	switch s {
+	case "type", "len":
+		s += "_"
+	}
+	return s
+}
+
+func cgoName(n string) string {
+	if sn, ok := specialCgoName(n); ok {
+		return sn
+	}
+	return "C." + n
+}
+
+func generalIntFilter(n string) string {
+	switch n {
+	case "int32", "uint32":
+		return "int"
+	}
+	return n
 }
 
 func specialCgoName(n string) (string, bool) {

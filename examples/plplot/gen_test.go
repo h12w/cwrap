@@ -29,8 +29,6 @@ var (
 				"c_plssub",
 				"c_plwidth",
 				"c_pllsty",
-//				"c_plcont",
-//				"c_pllegend",
 			},
 			CgoDirectives: []string{"pkg-config: plplotd"},
 		},

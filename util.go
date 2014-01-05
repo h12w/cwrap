@@ -5,10 +5,12 @@
 package cwrap
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"reflect"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -225,4 +227,14 @@ func (c cmd) exec() error {
 	}
 	return nil
 
+}
+
+func writeToString(write func(w io.Writer)) string {
+	var buf bytes.Buffer
+	write(&buf)
+	return buf.String()
+}
+
+func pt(v interface{}) {
+	p(reflect.TypeOf(v))
 }
