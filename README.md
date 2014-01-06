@@ -17,6 +17,35 @@ Features
   * Go closures as callbacks.
 * Stay out of the way when you need to do it manually for specified definitions.
 
+Usage
+-----
+Cwrap itself is a Go package rather than an executable program. Just fill a cwrap.Package struct literal and call it's Wrap method to generate your wrapper package under $GOPATH. Here is a simple example:
+
+Say you want to generate a wrapper package for SDL2, and its header is at
+
+    /usr/local/include/SDL2/SDL2.h
+
+So the cwrap.Package literal looks like:
+
+    var sdl = &Package{
+		PacName: "sdl",
+		PacPath: "go-sdl",
+		From: Header{
+			Dir:           "/usr/local/include/",
+			File:          "SDL2/SDL.h",
+			OtherCode:     "#define _SDL_main_h",
+			NamePattern:   `\ASDL(.*)`,
+			Excluded:      []string{},
+			CgoDirectives: []string{"pkg-config: sdl2"},
+			BoolTypes:     []string{"SDL_bool"},
+		},
+		Included: []*Package{},
+	}
+
+Then just call
+
+    err := sdl.Wrap()
+
 Examples
 --------
 In the examples directory, there are C libraries that I have successfully applied Cwrap, including:
@@ -37,6 +66,7 @@ Cwrap may not cover every possible case and fails to come up with a corrresondin
 
 TODO
 ----
+* Go idiomatic error handling (return error for each function/method).
 * Alignment and padding of generated Go struct fields may need more careful checking (currently no checking is done at all, Cwrap just naively assume the same rules are applied to both Go and C).
 
 Limitations
