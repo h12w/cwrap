@@ -21,6 +21,7 @@ Examples
 --------
 In the examples directory, there are C libraries that I have successfully applied Cwrap, including:
 * GSL (GNU Scientific Library)
+* MuPDF
 * PLplot
 * SDL2 (Simple DirectMedia Layer)
 
