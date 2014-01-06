@@ -146,7 +146,7 @@ func (s *receiver) WriteMethods(w io.Writer) {
 
 func (s *receiver) OptimizeNames(typeName string) {
 	for i, m := range s.Methods {
-		newName := trimPreSuffix(m.GoName(), typeName)
+		newName := replace(m.GoName(), typeName, "")
 		if newName != "" && !s.Methods.Has(newName) {
 			s.Methods[i].SetGoName(newName)
 		}
