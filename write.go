@@ -21,7 +21,7 @@ func (pac *Package) write(g, c, h io.Writer) error {
 		if len(fn.Ellipses) > 0 {
 			continue
 		}
-		if !pac.Exported(fn.CName(), fn.File()) {
+		if !pac.exported(fn.CName(), fn.File()) {
 			continue
 		}
 		f := pac.newFunction(fn)
@@ -203,11 +203,18 @@ func (pac *Package) write(g, c, h io.Writer) error {
 }
 
 func (pac *Package) writeDecl(w io.Writer, keyword string, d Decl) {
-	if !pac.Exported(d.CName(), d.File()) || d.GoName() == "" {
+	// some enums have no names but only values
+	if IsEnum(d) {
+		if pac.excluded(d.CName()) || !pac.included(d.File()) || contains(d.GoName(), ".") {
+			return
+		}
+	} else if !pac.exported(d.CName(), d.File()) {
 		return
 	}
 	fp(w, "// ", d.CName())
-	fpn(w, keyword, " ", d.GoName(), " ")
+	if d.GoName() != "" {
+		fpn(w, keyword, " ", d.GoName(), " ")
+	}
 	d.WriteSpec(w)
 	if t, ok := d.(TypeDecl); ok {
 		t.WriteMethods(w)
@@ -218,7 +225,7 @@ func (pac *Package) writeDecl(w io.Writer, keyword string, d Decl) {
 
 // type name that may be declared in this or included packages.
 func (pac *Package) globalName(o CNamer) string {
-	if pac.fileIds.Has(o.File()) && pac.matchPattern(o.CName()) {
+	if pac.fileIds.Has(o.File()) && pac.matched(o.CName()) {
 		return pac.localName(o)
 	}
 	for _, inc := range pac.Included {
@@ -251,10 +258,6 @@ func (pac *Package) upperName(cName string) string {
 	return upperName(cName, pac.pat)
 }
 
-func (pac *Package) matchPattern(s string) bool {
-	return pac.pat.MatchString(s)
-}
-
 func (pac *Package) isBool(cTypeName string) bool {
 	return pac.boolSet.Has(cTypeName)
 }
@@ -263,13 +266,27 @@ func (pac *Package) declare(d TypeDecl) {
 	pac.typeDeclMap[d.Id()] = d
 }
 
-func (pac *Package) Exported(cName, file string) bool {
+func (pac *Package) excluded(cName string) bool {
 	for _, n := range pac.From.Excluded {
 		if n == cName {
-			return false
+			return true
 		}
 	}
-	return pac.fileIds.Has(file) && pac.matchPattern(cName)
+	return false
+}
+
+func (pac *Package) included(file string) bool {
+	return pac.fileIds.Has(file)
+}
+
+func (pac *Package) matched(cName string) bool {
+	return pac.pat.MatchString(cName)
+}
+
+func (pac *Package) exported(cName, file string) bool {
+	return !pac.excluded(cName) &&
+		pac.included(file) &&
+		pac.matched(cName)
 }
 
 type TypeDecls []TypeDecl

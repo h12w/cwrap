@@ -246,3 +246,14 @@ func writeToString(write func(w io.Writer)) string {
 func pt(v interface{}) {
 	p(reflect.TypeOf(v))
 }
+
+func hex(i int, length int) string {
+	if i < 0 {
+		return strconv.FormatInt(int64(i), 10)
+	}
+	s := strings.ToUpper(strconv.FormatInt(int64(i), 16))
+	if len(s)+2 < length {
+		s = strings.Repeat("0", length-len(s)-2) + s
+	}
+	return "0x" + s
+}

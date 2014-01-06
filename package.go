@@ -214,7 +214,7 @@ func (pac *Package) GenConst(file string) error {
 	if err != nil {
 		return err
 	}
-	consts := ms.Constants(pac.pat)
+	consts := ms.Constants(pac.From.NamePattern)
 	nm := make(map[string]string)
 	for _, c := range consts {
 		nm[c.Name] = upperName(c.Name, pac.pat)

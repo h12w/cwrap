@@ -149,3 +149,18 @@ func convPtr(w io.Writer, assign, src, dst, dstType string) {
 func convValue(w io.Writer, assign, src, dst, dstType string) {
 	fp(w, dst, assign, "=*(*", dstType, ")(unsafe.Pointer(&", src, "))")
 }
+
+func IsEnum(v interface{}) bool {
+	switch t := v.(type) {
+	case *Enum:
+		return true
+	case *Typedef:
+		return IsEnum(t.literal)
+	}
+	return false
+}
+
+func IsVoid(v interface{}) bool {
+	_, ok := v.(*Void)
+	return ok
+}

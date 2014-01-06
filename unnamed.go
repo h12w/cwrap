@@ -244,8 +244,3 @@ func (*Void) ToGo(w io.Writer, assign, g, c string) {
 func (*Void) ToCgo(w io.Writer, assign, g, c string) {
 	panic("should not goes here.")
 }
-
-func IsVoid(v interface{}) bool {
-	_, ok := v.(*Void)
-	return ok
-}

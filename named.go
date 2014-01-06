@@ -42,11 +42,24 @@ type Enum struct {
 func (*Enum) WriteMethods(io.Writer) {
 }
 
+func (e *Enum) GoName() string {
+	return e.goName
+}
+
 func (e *Enum) WriteSpec(w io.Writer) {
-	fp(w, e.baseGoName)
+	if e.GoName() != "" {
+		fp(w, e.baseGoName)
+	}
 	fp(w, "const (")
+	length := 0
 	for _, v := range e.Values {
-		v.Declare(w)
+		l := len(hex(v.value, 0))
+		if length < l {
+			length = l
+		}
+	}
+	for _, v := range e.Values {
+		fp(w, v.goName, "=", hex(v.value, length))
 	}
 	fp(w, ")")
 }
@@ -59,10 +72,6 @@ type EnumValue struct {
 
 func (v *EnumValue) GoName() string {
 	return v.goName
-}
-
-func (v *EnumValue) Declare(w io.Writer) {
-	fp(w, v.goName, "=", v.value)
 }
 
 type Typedef struct {
