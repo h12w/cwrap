@@ -38,6 +38,10 @@ type Array struct {
 	length      int
 }
 
+func (a *Array) Size() int {
+	return a.elementType.Size() * a.length
+}
+
 func (a *Array) GoName() string {
 	return writeToString(a.WriteSpec)
 }
@@ -52,6 +56,10 @@ func (a *Array) CgoName() string {
 
 type Slice struct {
 	elementType Type
+}
+
+func (s *Slice) Size() int {
+	return MachineSize
 }
 
 func (s *Slice) GoName() string {
@@ -81,6 +89,10 @@ type SliceSlice struct {
 	slice Slice
 }
 
+func (s *SliceSlice) Size() int {
+	return MachineSize
+}
+
 func (s *SliceSlice) GoName() string {
 	return "[]" + s.slice.GoName()
 }
@@ -105,7 +117,7 @@ func (s *SliceSlice) ToCgo(w io.Writer, assign, g, c string) {
 	convPtr(w, "", "&"+g+"[i][0]", c_+"[i]", s.slice.CgoName())
 	fp(w, "}")
 	fp(w, "}")
-	(&Slice{&baseType{"[]*" + s.slice.GoName(), s.slice.CgoName()}}).ToCgo(w, assign, c_, c)
+	(&Slice{&baseType{"[]*" + s.slice.GoName(), s.slice.CgoName(), MachineSize}}).ToCgo(w, assign, c_, c)
 }
 
 type StringSlice struct {
@@ -116,6 +128,7 @@ func newStringSlice() *StringSlice {
 	return &StringSlice{baseType{
 		"[]string",
 		"**C.char",
+		MachineSize,
 	}}
 }
 
@@ -129,7 +142,7 @@ func (s *StringSlice) ToCgo(w io.Writer, assign, g, c string) {
 	fp(w, "for i := range ", g, "{")
 	newString().ToCgo(w, "", g+"[i]", c_+"[i]")
 	fp(w, "}")
-	(&Slice{&baseType{"[]string", "*C.char"}}).ToCgo(w, assign, c_, c)
+	(&Slice{&baseType{"[]string", "*C.char", MachineSize}}).ToCgo(w, assign, c_, c)
 }
 
 type String struct {
@@ -140,6 +153,7 @@ func newString() *String {
 	return &String{baseType{
 		"string",
 		"*C.char",
+		MachineSize,
 	}}
 }
 
@@ -154,6 +168,10 @@ func (s *String) ToGo(w io.Writer, assign, g, c string) {
 
 type ReturnPtr struct {
 	pointedType Type
+}
+
+func (r *ReturnPtr) Size() int {
+	return MachineSize
 }
 
 func (r *ReturnPtr) GoName() string {
@@ -179,9 +197,13 @@ type Ptr struct {
 	pointedType Type
 }
 
+func (t *Ptr) Size() int {
+	return MachineSize
+}
+
 func (t *Ptr) GoName() string {
 	n := t.pointedType.GoName()
-	if n == "" {
+	if n == "" || n == "[0]byte" {
 		return "uintptr"
 	}
 	return "*" + n

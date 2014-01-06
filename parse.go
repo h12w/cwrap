@@ -40,7 +40,7 @@ func (pac *Package) getType(gt gcc.Type, declare bool) Type {
 	// hard rule
 	if nt, ok := gt.(gcc.Named); ok {
 		if n, ok := pac.TypeRule[nt.CName()]; ok {
-			return newNum_(n, cgoName(nt.CName()))
+			return newNum_(n, cgoName(nt.CName()), gt.Size())
 		}
 	}
 	switch t := gt.(type) {
@@ -82,7 +82,7 @@ func (pac *Package) getType(gt gcc.Type, declare bool) Type {
 		}
 		return r
 	case *gcc.FunctionType:
-		return &baseType{"", "[0]byte"}
+		return &baseType{"[0]byte", "[0]byte", 0}
 	case gcc.Aliased:
 		return pac.declareType(t.Base())
 	case *gcc.Unimplemented:
@@ -99,7 +99,7 @@ func (pac *Package) getConv(gt gcc.Type, ptrKind gcc.PtrKind) Conv {
 	if ptrKind == gcc.NotSet {
 		n := pac.declareType(gt)
 		if named, ok := gt.(gcc.Named); ok && pac.isBool(named.CName()) {
-			return newBool(n.CgoName())
+			return newBool(n.CgoName(), gt.Size())
 		}
 		if argType, ok := n.(Conv); ok {
 			return argType
@@ -158,6 +158,7 @@ func (pac *Package) newArg(a *gcc.Argument) *Argument {
 			baseType{
 				goName,
 				"_" + goName,
+				a.CType().Size(),
 			},
 			pac.getConv(a.CType(), a.PtrKind()),
 		},
@@ -175,18 +176,19 @@ func (pac *Package) newReturn(gt gcc.Type) *Return {
 	} else {
 		t = pac.getConv(gt, gcc.NotSet)
 	}
-	return &Return{baseParam{baseType{"ret", "_ret"}, t}}
+	return &Return{baseParam{baseType{"ret", "_ret", gt.Size()}, t}}
 }
 
 func newNum(t *gcc.FundamentalType) *Num {
 	return &Num{SimpleConv{&baseType{
 		goName:  goNumMap[gcc.NumInfoFromGccName(t.CName())],
 		cgoName: gcc.NumCgoNameFromGccName(t.CName()),
+		size:    t.Size(),
 	}}}
 }
 
-func newNum_(goName, cgoName string) *Num {
-	return &Num{SimpleConv{&baseType{goName, cgoName}}}
+func newNum_(goName, cgoName string, size int) *Num {
+	return &Num{SimpleConv{&baseType{goName, cgoName, size}}}
 }
 
 func (pac *Package) newArray(t *gcc.ArrayType) Conv {
@@ -197,9 +199,10 @@ func newEnum(t *gcc.Enumeration) *Enum {
 	e := &Enum{
 		baseType: baseType{
 			cgoName: cgoName(t.CName()),
+			size:    t.Size(),
 		},
 		baseCNamer: newExported(t),
-		baseGoName: goNumMap[gcc.NumInfo{gcc.SignedInt, t.Size()}],
+		baseGoName: goNumMap[gcc.NumInfo{gcc.SignedInt, t.Size() * 8}],
 		Values:     newEnumValues(t.EnumValues),
 	}
 	e.SimpleConv = SimpleConv{e}
@@ -247,6 +250,7 @@ func newStructWithoutFields(t *gcc.Struct) *Struct {
 		baseCNamer: newExported(t),
 		baseType: baseType{
 			cgoName: cgoName(t.CName()),
+			size:    t.Size(),
 		},
 	}
 	s.ValueConv = ValueConv{s}
@@ -256,13 +260,18 @@ func newStructWithoutFields(t *gcc.Struct) *Struct {
 func (pac *Package) newStructFields(fields gcc.Fields) []StructField {
 	fs := make([]StructField, len(fields))
 	for i, f := range fields {
-		fs[i] = StructField{upperName(f.CName(), ""), pac.declareType(f.CType())}
+		fs[i] = StructField{upperName(f.CName(), nil), pac.declareType(f.CType())}
 	}
 	return fs
 }
 
 func (pac *Package) newTypedef(t *gcc.Typedef) *Typedef {
-	literal := pac.getType(t.Base(), false)
+	var literal SpecWriter
+	if t.IsEnum() {
+		literal = pac.declareType(t.Base())
+	} else {
+		literal = pac.getType(t.Base(), false)
+	}
 	convFunc := convValue
 	if t.IsFundamental() {
 		convFunc = conv
@@ -273,6 +282,7 @@ func (pac *Package) newTypedef(t *gcc.Typedef) *Typedef {
 		baseCNamer: newExported(t),
 		baseType: baseType{
 			cgoName: cgoName(t.CName()),
+			size:    t.Size(),
 		},
 		literal:  literal,
 		convFunc: convFunc,
@@ -286,8 +296,9 @@ func newUnionWithoutFields(t *gcc.Union) *Union {
 		baseCNamer: newExported(t),
 		baseType: baseType{
 			cgoName: cgoName(t.CName()),
+			size:    t.Size(),
 		},
-		size: t.Size() / 8,
+		size: t.Size(),
 	}
 	u.ValueConv = ValueConv{u}
 	return u
@@ -296,8 +307,8 @@ func newUnionWithoutFields(t *gcc.Union) *Union {
 func (pac *Package) newUnionFields(fields gcc.Fields, union *Union) []UnionField {
 	fs := make([]UnionField, len(fields))
 	for i, f := range fields {
-		fs[i] = UnionField{upperName(f.CName(), ""), pac.declareType(f.CType()),
-			uintptr(f.CType().Size() / 8), union}
+		fs[i] = UnionField{upperName(f.CName(), nil), pac.declareType(f.CType()),
+			f.CType().Size(), union}
 	}
 	return fs
 }
@@ -311,10 +322,11 @@ func (pac *Package) newVariable(t *gcc.Variable) *Variable {
 	return v
 }
 
-func newBool(cgoName string) *Bool {
+func newBool(cgoName string, size int) *Bool {
 	return &Bool{baseType{
 		"bool",
 		cgoName,
+		size,
 	}}
 }
 
@@ -389,7 +401,11 @@ func (s CallbackReturnPtr) ToCgo(w io.Writer, assign, g, c string) {
 func lowerName(o gcc.Named) string {
 	s := snakeToLowerCamel(o.CName())
 	switch s {
-	case "type", "len":
+	case "func", "interface", "select", "defer", "go", "map",
+		"chan", "package", "fallthrough", "range", "type", "import", "var",
+		"true", "false", "iota", "nil",
+		"append", "cap", "close", "complex", "copy", "delete", "imag", "len",
+		"make", "new", "panic", "print", "println", "real", "recover":
 		s += "_"
 	}
 	return s

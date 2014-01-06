@@ -11,13 +11,14 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"unsafe"
 )
 
 var (
-	MachineSize = unsafe.Sizeof(uintptr(0))
+	MachineSize = int(unsafe.Sizeof(uintptr(0)))
 )
 
 func p(v ...interface{}) {
@@ -73,11 +74,18 @@ func snakeToCamel(s string) string {
 	return join(ss, "")
 }
 
-func upperName(s, prefix string) string {
-	if s != prefix {
-		s = trimPrefix(s, prefix)
+func upperName(s string, re *regexp.Regexp) string {
+	if re != nil {
+		m := re.FindStringSubmatch(s)
+		if len(m) > 1 && m[1] != "" {
+			s = m[1]
+		}
 	}
 	return snakeToCamel(s)
+}
+
+func hasPrefix(s, prefix string) bool {
+	return strings.HasPrefix(s, prefix)
 }
 
 func snakeToLowerCamel(s string) string {
@@ -132,10 +140,6 @@ func (m *SSet) Has(s string) bool {
 	}
 	_, has := m.m[s]
 	return has
-}
-
-func hasPrefix(s, prefix string) bool {
-	return strings.HasPrefix(s, prefix)
 }
 
 func contains(s, substr string) bool {

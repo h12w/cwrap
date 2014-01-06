@@ -28,7 +28,7 @@ func (v *Variable) CgoName() string {
 }
 
 func (v *Variable) WriteSpec(w io.Writer) {
-	v.conv.ToGo(w, "", v.GoName(), v.CgoName())
+	v.conv.ToGo(w, "", "", v.CgoName())
 }
 
 type Enum struct {
@@ -94,6 +94,9 @@ func (d *Typedef) OptimizeNames() {
 	if o, ok := d.literal.(NameOptimizer); ok {
 		o.OptimizeNames()
 	}
+	if s, ok := d.literal.(*Struct); ok {
+		s.OptimizeFieldNames(d.Methods)
+	}
 }
 
 func (d *Typedef) WriteSpec(w io.Writer) {
@@ -150,12 +153,16 @@ type Struct struct {
 }
 
 func (s *Struct) OptimizeNames() {
+	s.OptimizeFieldNames(s.receiver.Methods)
+	s.receiver.OptimizeNames(s.GoName())
+}
+
+func (s *Struct) OptimizeFieldNames(methods Methods) {
 	for i, f := range s.Fields {
-		if s.Methods.Has(f.goName) {
+		if methods.Has(f.goName) {
 			s.Fields[i].goName += "_"
 		}
 	}
-	s.receiver.OptimizeNames(s.GoName())
 }
 
 func (s *Struct) WriteSpec(w io.Writer) {
@@ -184,6 +191,10 @@ type Union struct {
 	receiver
 }
 
+func (s *Union) OptimizeNames() {
+	s.receiver.OptimizeNames(s.GoName())
+}
+
 func (s *Union) WriteMethods(w io.Writer) {
 	for _, f := range s.Fields {
 		f.Declare(w)
@@ -198,7 +209,7 @@ func (s *Union) WriteSpec(w io.Writer) {
 type UnionField struct {
 	goName string
 	Type   GoNamer
-	size   uintptr
+	size   int
 	union  *Union
 }
 

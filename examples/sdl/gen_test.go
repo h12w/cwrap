@@ -19,12 +19,11 @@ var (
 		PacName: "sdl",
 		PacPath: "go-sdl",
 		From: Header{
-			Dir:        HeaderDir,
-			File:       "SDL2/SDL.h",
-			OtherCode:  "#define _SDL_main_h",
-			NamePrefix: "SDL",
-			Excluded: []string{
-			},
+			Dir:           HeaderDir,
+			File:          "SDL2/SDL.h",
+			OtherCode:     "#define _SDL_main_h",
+			NamePattern:   `\ASDL(.*)`,
+			Excluded:      []string{},
 			CgoDirectives: []string{"pkg-config: sdl2"},
 			BoolTypes:     boolTypes,
 		},
@@ -38,7 +37,7 @@ var (
 		From: Header{
 			Dir:           HeaderDir,
 			File:          "SDL2/SDL_ttf.h",
-			NamePrefix:    "TTF",
+			NamePattern:   `\ATTF(.*)`,
 			CgoDirectives: []string{"pkg-config: SDL2_ttf"},
 			BoolTypes:     boolTypes,
 		},

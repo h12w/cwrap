@@ -14,12 +14,16 @@ type FuncType struct {
 	Return   *Return
 }
 
+func (f *FuncType) Size() int {
+	return 0
+}
+
 func (f *FuncType) GoName() string {
 	return writeToString(f.WriteSpec)
 }
 
 func (f *FuncType) CgoName() string {
-	return "unsafe.Pointer"
+	return "[0]byte"
 }
 
 func (f *FuncType) WriteSpec(w io.Writer) {
@@ -112,10 +116,14 @@ func (f *Function) initCArgs(w io.Writer) {
 }
 
 func (f *Function) ConvertToMethod() (*Method, bool) {
-	if len(f.CArgs) > 0 &&
-		f.CArgs[0].IsPtr() &&
-		!contains(f.CArgs[0].GoTypeName(), ".") &&
-		f.CArgs[0].GoTypeName() != "uintptr" {
+	if len(f.CArgs) == 0 {
+		return nil, false
+	}
+	recType := f.CArgs[0].GoTypeName()
+	if f.CArgs[0].IsPtr() &&
+		!contains(recType, ".") &&
+		!contains(recType, "[") &&
+		recType != "uintptr" {
 		if ref, ok := f.CArgs[0].conv.(*Ptr); ok {
 			if r, ok := ref.pointedType.(ReceiverType); ok {
 				f.GoParams = f.GoParams[1:]
@@ -182,15 +190,16 @@ type Argument struct {
 }
 
 func (a *baseParam) Conv() Conv {
-	if a.conv.GoName() == "" {
-		//pt(a.conv)
-		//p(a.conv.CgoName())
-	} else if gi := generalIntFilter(a.conv.GoName()); gi != a.conv.GoName() {
-		switch t := a.conv.(type) {
-		case *ReturnPtr:
-			return &ReturnPtr{newNum_("int", t.pointedType.CgoName())}
-		default:
-			return newNum_("int", t.CgoName())
+	if a.conv.GoName() != "" {
+		gi := generalIntFilter(a.conv.GoName())
+		if gi != a.conv.GoName() {
+			switch t := a.conv.(type) {
+			case *ReturnPtr:
+				return &ReturnPtr{newNum_("int", t.pointedType.CgoName(),
+					a.conv.Size())}
+			default:
+				return newNum_("int", t.CgoName(), a.conv.Size())
+			}
 		}
 	}
 	return a.conv
@@ -325,6 +334,7 @@ func (f CallbackFunc) callbackArg() *Argument {
 			baseType{
 				ca.GoName(),
 				ca.CgoName(),
+				0,
 			},
 			f.internalFunc(),
 		},

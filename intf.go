@@ -50,6 +50,7 @@ type TypeDecl interface {
 type Type interface {
 	GoNamer
 	CgoNamer
+	Size() int
 	SpecWriter
 }
 
@@ -66,6 +67,11 @@ type NameOptimizer interface {
 type baseType struct {
 	goName  string
 	cgoName string
+	size    int
+}
+
+func (t *baseType) Size() int {
+	return t.size
 }
 
 func (t *baseType) SetGoName(n string) {
@@ -73,6 +79,9 @@ func (t *baseType) SetGoName(n string) {
 }
 
 func (t *baseType) GoName() string {
+	if t.goName == "" {
+		return sprint("[", t.size, "]byte")
+	}
 	return t.goName
 }
 

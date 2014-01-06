@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"regexp"
 	"runtime"
 	"syscall"
 )
@@ -20,10 +21,10 @@ var (
 )
 
 type Header struct {
-	Dir        string
-	File       string
-	NamePrefix string
-	OtherCode  string
+	Dir         string
+	File        string
+	NamePattern string
+	OtherCode   string
 	// Not define it in the package, but may still searchable as included types
 	// because it may be manually defined.
 	Excluded      []string
@@ -58,6 +59,7 @@ type Package struct {
 	TypeRule map[string]string
 
 	// Internal
+	pat         *regexp.Regexp
 	localNames  map[string]string
 	fileIds     SSet
 	boolSet     SSet
@@ -67,6 +69,10 @@ type Package struct {
 }
 
 func (pac *Package) Load() (err error) {
+	if pac.From.NamePattern == "" {
+		pac.From.NamePattern = ".*"
+	}
+	pac.pat = regexp.MustCompile(pac.From.NamePattern)
 	pac.localNames = make(map[string]string)
 	pac.initBoolSet()
 	pac.typeDeclMap = make(TypeDeclMap)
@@ -198,6 +204,7 @@ func (pac *Package) prepare() error {
 	return nil
 }
 
+/*
 func (pac *Package) GenConst(file string) error {
 	f, err := os.Create(file)
 	if err != nil {
@@ -220,6 +227,7 @@ func (pac *Package) GenConst(file string) error {
 	fp(f, ")")
 	return nil
 }
+*/
 
 type Statistics struct {
 	DefCount int

@@ -128,6 +128,14 @@ func (pac *Package) write(g, c, h io.Writer) error {
 			e.Values[i].goName = pac.localName(v)
 		}
 	}
+	// then remove the enumeration if it is typedefed.
+	pac.typeDeclMap.Each(func(d TypeDecl) {
+		if t, ok := d.(*Typedef); ok {
+			if e, ok := t.literal.(*Enum); ok {
+				excluded = append(excluded, e.Id())
+			}
+		}
+	})
 
 	// optimize 2nd level names like fields and methods, must go after all
 	// global level names are settled.
@@ -136,6 +144,11 @@ func (pac *Package) write(g, c, h io.Writer) error {
 			o.OptimizeNames()
 		}
 	})
+
+	// assign name to variables
+	for _, v := range variables {
+		v.SetGoName(pac.localName(v))
+	}
 
 	// remove excluded types
 	for _, id := range excluded {
@@ -205,7 +218,7 @@ func (pac *Package) writeDecl(w io.Writer, keyword string, d Decl) {
 
 // type name that may be declared in this or included packages.
 func (pac *Package) globalName(o CNamer) string {
-	if pac.fileIds.Has(o.File()) && pac.hasPrefix(o.CName()) {
+	if pac.fileIds.Has(o.File()) && pac.matchPattern(o.CName()) {
 		return pac.localName(o)
 	}
 	for _, inc := range pac.Included {
@@ -235,11 +248,11 @@ func (pac *Package) localName(o CNamer) string {
 
 // upper camel name
 func (pac *Package) upperName(cName string) string {
-	return upperName(cName, pac.From.NamePrefix)
+	return upperName(cName, pac.pat)
 }
 
-func (pac *Package) hasPrefix(s string) bool {
-	return hasPrefix(s, pac.From.NamePrefix)
+func (pac *Package) matchPattern(s string) bool {
+	return pac.pat.MatchString(s)
 }
 
 func (pac *Package) isBool(cTypeName string) bool {
@@ -256,7 +269,7 @@ func (pac *Package) Exported(cName, file string) bool {
 			return false
 		}
 	}
-	return pac.fileIds.Has(file) && pac.hasPrefix(cName)
+	return pac.fileIds.Has(file) && pac.matchPattern(cName)
 }
 
 type TypeDecls []TypeDecl
