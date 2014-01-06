@@ -65,4 +65,6 @@ func Test(*testing.T) {
 //	OutputDir += "reg/"
 	c(ttf.Wrap())
 	c(sdl.Wrap())
+	//ttf.GenConst("/dev/stdout")
+	//sdl.GenConst("/dev/stdout")
 }

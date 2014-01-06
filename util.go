@@ -146,6 +146,10 @@ func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
 
+func replace(s, old, new string) string {
+	return strings.Replace(s, old, new, -1)
+}
+
 func trimPreSuffix(s, fix string) string {
 	return strings.TrimSuffix(strings.TrimPrefix(s, fix), fix)
 }

@@ -204,7 +204,6 @@ func (pac *Package) prepare() error {
 	return nil
 }
 
-/*
 func (pac *Package) GenConst(file string) error {
 	f, err := os.Create(file)
 	if err != nil {
@@ -215,19 +214,25 @@ func (pac *Package) GenConst(file string) error {
 	if err != nil {
 		return err
 	}
-	consts := ms.Constants(pac.From.NamePrefix)
+	consts := ms.Constants(pac.pat)
+	nm := make(map[string]string)
+	for _, c := range consts {
+		nm[c.Name] = upperName(c.Name, pac.pat)
+	}
 
 	fp(f, "package ", pac.PacName)
 	fp(f, "")
 	fp(f, "const (")
 	for _, c := range consts {
-		fp(f, snakeToCamel(trimPrefix(c.Name, pac.From.NamePrefix)), "=",
-			snakeToCamel(remove(c.Body, pac.From.NamePrefix+"_")))
+		body := c.Body
+		for k, v := range nm {
+			body = replace(body, k, v)
+		}
+		fp(f, upperName(c.Name, pac.pat), "=", body)
 	}
 	fp(f, ")")
 	return nil
 }
-*/
 
 type Statistics struct {
 	DefCount int
