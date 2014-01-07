@@ -15,7 +15,7 @@ Features
   * Slice, slice of slice and slice of string.
   * struct with methods. 
   * Go closures as callbacks.
-* Stay out of the way when you need to do it manually for specified definitions.
+* Stay out of the way when you need to do it manually for specified declarations.
 
 Usage
 -----
