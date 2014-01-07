@@ -12,7 +12,7 @@ type Variable struct {
 	baseCNamer
 	goName  string
 	cgoName string
-	conv    Conv
+	conv    TypeConv
 }
 
 func (v *Variable) GoName() string {
@@ -33,13 +33,10 @@ func (v *Variable) WriteSpec(w io.Writer) {
 
 type Enum struct {
 	baseCNamer
-	baseType
-	SimpleConv
+	baseEqualType
 	baseGoName string
 	Values     []EnumValue
-}
-
-func (*Enum) WriteMethods(io.Writer) {
+	Methods
 }
 
 func (e *Enum) GoName() string {
@@ -76,30 +73,29 @@ func (v *EnumValue) GoName() string {
 
 type Typedef struct {
 	baseCNamer
-	baseType
-	literal  SpecWriter
-	convFunc func(io.Writer, string, string, string, string)
-	receiver
+	baseEqualType
+	literal SpecWriter
+	Methods
 	rootId string
 }
 
 func (d *Typedef) GoName() string {
 	if d.goName == "" {
-		return d.Root().GoName()
+		d.goName = d.Root().GoName()
 	}
 	return d.goName
 }
 
-func (d *Typedef) Root() Type {
+func (d *Typedef) Root() EqualType {
 	switch t := d.literal.(type) {
 	case *Typedef:
 		return t.Root()
 	}
-	return d.literal.(Type)
+	return d.literal.(EqualType)
 }
 
 func (d *Typedef) OptimizeNames() {
-	d.receiver.OptimizeNames(d.GoName())
+	d.Methods.OptimizeNames(d.GoName())
 	if o, ok := d.literal.(NameOptimizer); ok {
 		o.OptimizeNames()
 	}
@@ -119,51 +115,19 @@ func (d *Typedef) WriteMethods(w io.Writer) {
 		u.WriteMethods(w)
 		u.SetGoName(goName)
 	}
-	d.receiver.WriteMethods(w)
-}
-
-func (d *Typedef) ToCgo(w io.Writer, assign, g, c string) {
-	d.convFunc(w, assign, g, c, d.CgoName())
-}
-
-func (d *Typedef) ToGo(w io.Writer, assign, g, c string) {
-	d.convFunc(w, assign, c, g, d.GoName())
-}
-
-type receiver struct {
-	Methods
-}
-
-func (s *receiver) AddMethod(m *Method) {
-	s.Methods.AddUnique(m)
-}
-
-func (s *receiver) WriteMethods(w io.Writer) {
-	for _, m := range s.Methods {
-		m.Declare(w)
-	}
-}
-
-func (s *receiver) OptimizeNames(typeName string) {
-	for i, m := range s.Methods {
-		newName := replace(m.GoName(), typeName, "")
-		if newName != "" && !s.Methods.Has(newName) {
-			s.Methods[i].SetGoName(newName)
-		}
-	}
+	d.Methods.WriteMethods(w)
 }
 
 type Struct struct {
 	baseCNamer
-	baseType
-	ValueConv
+	baseEqualType
 	Fields []StructField
-	receiver
+	Methods
 }
 
 func (s *Struct) OptimizeNames() {
-	s.OptimizeFieldNames(s.receiver.Methods)
-	s.receiver.OptimizeNames(s.GoName())
+	s.OptimizeFieldNames(s.Methods)
+	s.Methods.OptimizeNames(s.GoName())
 }
 
 func (s *Struct) OptimizeFieldNames(methods Methods) {
@@ -184,31 +148,29 @@ func (s *Struct) WriteSpec(w io.Writer) {
 
 type StructField struct {
 	goName string
-	Type   GoNamer
+	EqualType
 }
 
 func (f *StructField) Declare(w io.Writer) {
-	fp(w, f.goName, " ", f.Type.GoName())
+	fp(w, f.goName, " ", f.EqualType.GoName())
 }
 
 type Union struct {
 	baseCNamer
-	baseType
-	ValueConv
-	size   int
+	baseEqualType
 	Fields []UnionField
-	receiver
+	Methods
 }
 
 func (s *Union) OptimizeNames() {
-	s.receiver.OptimizeNames(s.GoName())
+	s.Methods.OptimizeNames(s.GoName())
 }
 
 func (s *Union) WriteMethods(w io.Writer) {
 	for _, f := range s.Fields {
 		f.Declare(w)
 	}
-	s.receiver.WriteMethods(w)
+	s.Methods.WriteMethods(w)
 }
 
 func (s *Union) WriteSpec(w io.Writer) {
@@ -217,13 +179,12 @@ func (s *Union) WriteSpec(w io.Writer) {
 
 type UnionField struct {
 	goName string
-	Type   GoNamer
-	size   int
-	union  *Union
+	EqualType
+	union *Union
 }
 
 func (f *UnionField) Declare(w io.Writer) {
-	if f.size <= MachineSize {
+	if f.Size() <= MachineSize {
 		f.defineValueGetter(w)
 	} else {
 		f.definePtrGetter(w)
@@ -232,14 +193,14 @@ func (f *UnionField) Declare(w io.Writer) {
 
 func (f *UnionField) defineValueGetter(w io.Writer) {
 	fp(w, "func (u *", f.union.GoName(), ")", f.goName, "() ",
-		f.Type.GoName(), "{")
-	fp(w, "return ", "*(*", f.Type.GoName(), ")(unsafe.Pointer(u))")
+		f.EqualType.GoName(), "{")
+	fp(w, "return ", "*(*", f.EqualType.GoName(), ")(unsafe.Pointer(u))")
 	fp(w, "}")
 }
 
 func (f *UnionField) definePtrGetter(w io.Writer) {
 	fp(w, "func (u *", f.union.GoName(), ")", f.goName, "() *",
-		f.Type.GoName(), "{")
-	fp(w, "return ", "(*", f.Type.GoName(), ")(unsafe.Pointer(u))")
+		f.EqualType.GoName(), "{")
+	fp(w, "return ", "(*", f.EqualType.GoName(), ")(unsafe.Pointer(u))")
 	fp(w, "}")
 }

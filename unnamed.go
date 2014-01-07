@@ -9,13 +9,7 @@ import (
 )
 
 type Num struct {
-	SimpleConv
-}
-
-func (n *Num) SetGoName(name string) {
-	if s, ok := n.SimpleConv.Type.(GoNameSetter); ok {
-		s.SetGoName(name)
-	}
+	baseEqualType
 }
 
 type Bool struct {
@@ -34,8 +28,16 @@ func (n *Bool) ToGo(w io.Writer, assign, g, c string) {
 }
 
 type Array struct {
-	elementType Type
+	elementType EqualType
 	length      int
+}
+
+func (a *Array) ToCgo(w io.Writer, assign, g, c string) {
+	convValue(w, assign, g, c, a.CgoName())
+}
+
+func (a *Array) ToGo(w io.Writer, assign, g, c string) {
+	convValue(w, assign, c, g, a.GoName())
 }
 
 func (a *Array) Size() int {
@@ -58,10 +60,6 @@ type Slice struct {
 	elementType Type
 }
 
-func (s *Slice) Size() int {
-	return MachineSize
-}
-
 func (s *Slice) GoName() string {
 	return "[]" + s.elementType.GoName()
 }
@@ -79,70 +77,33 @@ func (s *Slice) ToGo(w io.Writer, assign, g, c string) {
 }
 
 func (s *Slice) ToCgo(w io.Writer, assign, g, c string) {
-	conv(w, ":", "nil", c, s.CgoName())
+	if assign == ":" {
+		conv(w, ":", "nil", c, s.CgoName())
+	}
 	fp(w, "if len(", g, ")>0 {")
 	convPtr(w, "", "&"+g+"[0]", c, s.CgoName())
 	fp(w, "}")
 }
 
 type SliceSlice struct {
-	slice Slice
+	Slice
 }
 
-func (s *SliceSlice) Size() int {
-	return MachineSize
-}
-
-func (s *SliceSlice) GoName() string {
-	return "[]" + s.slice.GoName()
-}
-
-func (s *SliceSlice) CgoName() string {
-	return "*" + s.slice.CgoName()
-}
-
-func (s *SliceSlice) WriteSpec(w io.Writer) {
-	fpn(w, s.GoName())
-}
-
-func (s *SliceSlice) ToGo(w io.Writer, assign, g, c string) {
-	fp(w, "// No ToGo conversion for SliceSlice yet.")
+func newSliceSlice(elementType Type) *SliceSlice {
+	return &SliceSlice{Slice{&Slice{elementType}}}
 }
 
 func (s *SliceSlice) ToCgo(w io.Writer, assign, g, c string) {
 	c_ := c + "_"
-	fp(w, c_, " := make([]", s.slice.CgoName(), ", len(", g, "))")
+	fp(w, c_, " := make([]", s.elementType.CgoName(), ", len(", g, "))")
 	fp(w, "for i := range ", g, "{")
-	fp(w, "if len(", g, "[i])>0 {")
-	convPtr(w, "", "&"+g+"[i][0]", c_+"[i]", s.slice.CgoName())
+	s.elementType.ToCgo(w, "", g+"[i]", c_+"[i]")
 	fp(w, "}")
-	fp(w, "}")
-	(&Slice{&baseType{"[]*" + s.slice.GoName(), s.slice.CgoName(), MachineSize}}).ToCgo(w, assign, c_, c)
+	s.Slice.ToCgo(w, assign, c_, c)
 }
 
-type StringSlice struct {
-	baseType
-}
-
-func newStringSlice() *StringSlice {
-	return &StringSlice{baseType{
-		"[]string",
-		"**C.char",
-		MachineSize,
-	}}
-}
-
-func (s *StringSlice) ToGo(w io.Writer, assign, g, c string) {
-	fp(w, "// No ToGo conversion for StringSlice yet.")
-}
-
-func (s *StringSlice) ToCgo(w io.Writer, assign, g, c string) {
-	c_ := c + "_"
-	fp(w, c_, " := make([]*C.char, len(", g, "))")
-	fp(w, "for i := range ", g, "{")
-	newString().ToCgo(w, "", g+"[i]", c_+"[i]")
-	fp(w, "}")
-	(&Slice{&baseType{"[]string", "*C.char", MachineSize}}).ToCgo(w, assign, c_, c)
+func newStringSlice() *SliceSlice {
+	return &SliceSlice{Slice{newString()}}
 }
 
 type String struct {
@@ -153,7 +114,6 @@ func newString() *String {
 	return &String{baseType{
 		"string",
 		"*C.char",
-		MachineSize,
 	}}
 }
 
@@ -167,11 +127,7 @@ func (s *String) ToGo(w io.Writer, assign, g, c string) {
 }
 
 type ReturnPtr struct {
-	pointedType Type
-}
-
-func (r *ReturnPtr) Size() int {
-	return MachineSize
+	pointedType EqualType
 }
 
 func (r *ReturnPtr) GoName() string {
@@ -194,7 +150,7 @@ func (r *ReturnPtr) ToCgo(w io.Writer, assign, g, c string) {
 }
 
 type Ptr struct {
-	pointedType Type
+	pointedType EqualType
 }
 
 func (t *Ptr) Size() int {
@@ -202,19 +158,17 @@ func (t *Ptr) Size() int {
 }
 
 func (t *Ptr) GoName() string {
-	n := t.pointedType.GoName()
-	if n == "" || n == "[0]byte" {
+	if t.pointedType == nil || t.pointedType.GoName() == "" {
 		return "uintptr"
 	}
-	return "*" + n
+	return "*" + t.pointedType.GoName()
 }
 
 func (t *Ptr) CgoName() string {
-	n := t.pointedType.CgoName()
-	if n == "" {
+	if t.pointedType == nil || t.pointedType.CgoName() == "" {
 		return "unsafe.Pointer"
 	}
-	return "*" + n
+	return "*" + t.pointedType.CgoName()
 }
 
 func (t *Ptr) WriteSpec(w io.Writer) {
@@ -222,7 +176,7 @@ func (t *Ptr) WriteSpec(w io.Writer) {
 }
 
 func (t *Ptr) ToCgo(w io.Writer, assign, g, c string) {
-	if t.CgoName() == "unsafe.Pointer" {
+	if t.CgoName() == "unsafe.Pointer" || IsFunc(t.pointedType) {
 		conv(w, assign, g, c, t.CgoName())
 	} else {
 		convPtr(w, assign, g, c, t.CgoName())
@@ -233,14 +187,10 @@ func (t *Ptr) ToGo(w io.Writer, assign, g, c string) {
 	convPtr(w, assign, c, g, t.GoName())
 }
 
-type Void struct {
-	baseType
+type FuncType struct {
+	baseEqualType
 }
 
-func (*Void) ToGo(w io.Writer, assign, g, c string) {
-	panic("should not goes here.")
-}
-
-func (*Void) ToCgo(w io.Writer, assign, g, c string) {
-	panic("should not goes here.")
+func newFuncType() *FuncType {
+	return &FuncType{baseEqualType{"[0]byte", "[0]byte", 0, nil}}
 }

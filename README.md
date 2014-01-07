@@ -68,6 +68,7 @@ TODO
 ----
 * Go idiomatic error handling (return error for each function/method).
 * Alignment and padding of generated Go struct fields may need more careful checking (currently no checking is done at all, Cwrap just naively assume the same rules are applied to both Go and C).
+* Godoc documentation.
 
 Limitations
 -----------

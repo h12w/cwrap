@@ -122,7 +122,7 @@ func (pac *Package) write(g, c, h io.Writer) error {
 
 	// add all enumerations regardless of its appearance in functions
 	for _, em := range pac.Enumerations {
-		e := pac.declareType(em).(*Enum)
+		e := pac.declareEqualType(em).(*Enum)
 		e.goName = pac.globalName(e)
 		for i, v := range e.Values {
 			e.Values[i].goName = pac.localName(v)
@@ -296,7 +296,15 @@ func (s TypeDecls) Len() int {
 }
 
 func (s TypeDecls) Less(i, j int) bool {
-	return s[i].GoName() < s[j].GoName()
+	ni := s[i].GoName()
+	if ni == "" {
+		ni = s[i].CName()
+	}
+	nj := s[j].GoName()
+	if nj == "" {
+		nj = s[j].CName()
+	}
+	return ni < nj
 }
 
 func (s TypeDecls) Swap(i, j int) {

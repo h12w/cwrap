@@ -57,6 +57,7 @@ type Package struct {
 	CFile    string
 	HFile    string
 	TypeRule map[string]string
+	ArgRule  map[string]string
 
 	// Internal
 	pat         *regexp.Regexp

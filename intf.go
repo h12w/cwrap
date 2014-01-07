@@ -34,28 +34,7 @@ type MethodsWriter interface {
 	WriteMethods(w io.Writer)
 }
 
-type Decl interface {
-	CNamer
-	GoNamer
-	SpecWriter
-}
-
-type TypeDecl interface {
-	CNamer
-	Type
-	GoNameSetter
-	MethodsWriter
-}
-
-type Type interface {
-	GoNamer
-	CgoNamer
-	Size() int
-	SpecWriter
-}
-
-type Conv interface {
-	Type
+type TypeConv interface {
 	ToCgo(w io.Writer, assign, g, c string)
 	ToGo(w io.Writer, assign, g, c string)
 }
@@ -64,14 +43,40 @@ type NameOptimizer interface {
 	OptimizeNames()
 }
 
+type Type interface {
+	GoNamer
+	CgoNamer
+	TypeConv
+}
+
+type EqualType interface {
+	Type
+	Size() int
+	SpecWriter
+}
+
+type ReceiverType interface {
+	EqualType
+	AddMethod(m *Method)
+	MethodsWriter
+}
+
+type Decl interface {
+	CNamer
+	GoNamer
+	GoNameSetter
+	SpecWriter
+}
+
+type TypeDecl interface {
+	ReceiverType
+	CNamer
+	GoNameSetter
+}
+
 type baseType struct {
 	goName  string
 	cgoName string
-	size    int
-}
-
-func (t *baseType) Size() int {
-	return t.size
 }
 
 func (t *baseType) SetGoName(n string) {
@@ -79,9 +84,6 @@ func (t *baseType) SetGoName(n string) {
 }
 
 func (t *baseType) GoName() string {
-	if t.goName == "" {
-		return sprint("[", t.size, "]byte")
-	}
 	return t.goName
 }
 
@@ -89,8 +91,42 @@ func (t *baseType) CgoName() string {
 	return t.cgoName
 }
 
-func (t *baseType) WriteSpec(w io.Writer) {
+type baseEqualType struct {
+	goName  string
+	cgoName string
+	size    int
+	conv    Conv
+}
+
+func (t *baseEqualType) Size() int {
+	return t.size
+}
+
+func (t *baseEqualType) SetGoName(n string) {
+	t.goName = n
+}
+
+func (t *baseEqualType) GoName() string {
+	if t.goName == "" {
+		t.goName = sprint("[", t.size, "]byte")
+	}
+	return t.goName
+}
+
+func (t *baseEqualType) CgoName() string {
+	return t.cgoName
+}
+
+func (t *baseEqualType) WriteSpec(w io.Writer) {
 	fpn(w, t.goName)
+}
+
+func (t *baseEqualType) ToCgo(w io.Writer, assign, g, c string) {
+	t.conv.ToCgo(w, assign, g, c, t.cgoName)
+}
+
+func (t *baseEqualType) ToGo(w io.Writer, assign, g, c string) {
+	t.conv.ToGo(w, assign, g, c, t.goName)
 }
 
 type baseCNamer struct {
@@ -111,29 +147,31 @@ func (e baseCNamer) File() string {
 	return e.file
 }
 
-type SimpleConv struct {
-	Type
+type Conv interface {
+	ToCgo(w io.Writer, assign, g, c, ctype string)
+	ToGo(w io.Writer, assign, g, c, gtype string)
 }
 
-func (n SimpleConv) ToCgo(w io.Writer, assign, g, c string) {
-	conv(w, assign, g, c, n.CgoName())
+type ConvFunc func(io.Writer, string, string, string, string)
+
+type convImpl struct {
+	toCgo ConvFunc
+	toGo  ConvFunc
 }
 
-func (n SimpleConv) ToGo(w io.Writer, assign, g, c string) {
-	conv(w, assign, c, g, n.GoName())
+func (conv *convImpl) ToCgo(w io.Writer, assign, g, c, ctype string) {
+	conv.toCgo(w, assign, g, c, ctype)
 }
 
-type ValueConv struct {
-	Type
+func (conv *convImpl) ToGo(w io.Writer, assign, g, c, gtype string) {
+	conv.toGo(w, assign, c, g, gtype)
 }
 
-func (a ValueConv) ToCgo(w io.Writer, assign, g, c string) {
-	convValue(w, assign, g, c, a.CgoName())
-}
-
-func (a ValueConv) ToGo(w io.Writer, assign, g, c string) {
-	convValue(w, assign, c, g, a.GoName())
-}
+var (
+	NumConv = &convImpl{conv, conv}
+	PtrConv = &convImpl{convPtr, convPtr}
+	ValConv = &convImpl{convValue, convValue}
+)
 
 func conv(w io.Writer, assign, src, dst, dstType string) {
 	if hasPrefix(dstType, "*") {
@@ -148,19 +186,4 @@ func convPtr(w io.Writer, assign, src, dst, dstType string) {
 
 func convValue(w io.Writer, assign, src, dst, dstType string) {
 	fp(w, dst, assign, "=*(*", dstType, ")(unsafe.Pointer(&", src, "))")
-}
-
-func IsEnum(v interface{}) bool {
-	switch t := v.(type) {
-	case *Enum:
-		return true
-	case *Typedef:
-		return IsEnum(t.literal)
-	}
-	return false
-}
-
-func IsVoid(v interface{}) bool {
-	_, ok := v.(*Void)
-	return ok
 }

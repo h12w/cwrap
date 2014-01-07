@@ -8,41 +8,37 @@ import (
 	"io"
 )
 
-type FuncType struct {
+type baseFunc struct {
 	GoParams Params
 	CArgs    Arguments
 	Return   *Return
 }
 
-func (f *FuncType) Size() int {
-	return 0
-}
-
-func (f *FuncType) GoName() string {
+func (f *baseFunc) GoName() string {
 	return writeToString(f.WriteSpec)
 }
 
-func (f *FuncType) CgoName() string {
+func (f *baseFunc) CgoName() string {
 	return "[0]byte"
 }
 
-func (f *FuncType) WriteSpec(w io.Writer) {
+func (f *baseFunc) WriteSpec(w io.Writer) {
 	fpn(w, "func ")
 	goParamDeclListTypeOnly(w, f.GoParams.In()...)
 	goParamDeclListTypeOnly(w, f.GoParams.Out()...)
 }
 
-func (f *FuncType) ToCgo(w io.Writer, assign, g, c string) {
+func (f *baseFunc) ToCgo(w io.Writer, assign, g, c string) {
 	conv(w, assign, g, c, f.CgoName())
 }
 
-func (f *FuncType) ToGo(w io.Writer, assign, g, c string) {
+func (f *baseFunc) ToGo(w io.Writer, assign, g, c string) {
 	fpn(w, g, assign, "=*(*")
 	f.WriteSpec(w)
 	fp(w, ")(", c, ")")
 }
 
-func (f *FuncType) goCall(w io.Writer, funcName string) {
+func (f *baseFunc) goCall(w io.Writer, funcName string) {
 	if len(f.GoParams.Out()) > 0 {
 		fpn(w, f.GoParams.Out()[0].GoName())
 		for _, a := range f.GoParams.Out()[1:] {
@@ -57,7 +53,7 @@ func (f *FuncType) goCall(w io.Writer, funcName string) {
 	fp(w, ")")
 }
 
-func (f *FuncType) cgoCall(w io.Writer, funcName string) {
+func (f *baseFunc) cgoCall(w io.Writer, funcName string) {
 	if f.Return != nil {
 		fpn(w, f.Return.CgoName(), ":=")
 	}
@@ -71,7 +67,7 @@ func (f *FuncType) cgoCall(w io.Writer, funcName string) {
 type Function struct {
 	goName string
 	baseCNamer
-	FuncType
+	baseFunc
 }
 
 func (f *Function) GoName() string {
@@ -124,11 +120,11 @@ func (f *Function) ConvertToMethod() (*Method, bool) {
 		!contains(recType, ".") &&
 		!contains(recType, "[") &&
 		recType != "uintptr" {
-		if ref, ok := f.CArgs[0].conv.(*Ptr); ok {
+		if ref, ok := f.CArgs[0].type_.(*Ptr); ok {
 			if r, ok := ref.pointedType.(ReceiverType); ok {
 				f.GoParams = f.GoParams[1:]
 				m := &Method{f, ReceiverArg{f.CArgs[0], r}}
-				m.Receiver.Type.AddMethod(m)
+				m.Receiver.EqualType.AddMethod(m)
 				return m, true
 			}
 		}
@@ -157,31 +153,43 @@ func (m *Method) signature(w io.Writer) {
 
 type Methods []*Method
 
-func (fs *Methods) AddUnique(fn *Method) {
-	for _, f := range *fs {
-		if f.CName() == fn.CName() {
-			return
-		}
-	}
-	fs.Append(fn)
-}
-
-func (fs *Methods) Has(goName string) bool {
-	for _, f := range *fs {
-		if f.GoName() == goName {
+func (ms *Methods) Has(methodName string) bool {
+	for _, m := range *ms {
+		if m.GoName() == methodName {
 			return true
 		}
 	}
 	return false
 }
 
-func (fs *Methods) Append(f *Method) {
-	*fs = append(*fs, f)
+func (ms *Methods) AddMethod(method *Method) {
+	for _, m := range *ms {
+		if m.CName() == method.CName() {
+			return
+		}
+	}
+	*ms = append(*ms, method)
+}
+
+func (ms *Methods) WriteMethods(w io.Writer) {
+	for _, m := range *ms {
+		m.Declare(w)
+	}
+}
+
+func (ms *Methods) OptimizeNames(typeName string) {
+	for i, m := range *ms {
+		newName := replace(m.GoName(), typeName, "")
+		if newName != "" && !ms.Has(newName) {
+			(*ms)[i].SetGoName(newName)
+		}
+	}
 }
 
 type baseParam struct {
-	baseType
-	conv Conv
+	goName  string
+	cgoName string
+	type_   Type
 }
 
 type Argument struct {
@@ -189,20 +197,22 @@ type Argument struct {
 	isOut bool
 }
 
-func (a *baseParam) Conv() Conv {
-	if a.conv.GoName() != "" {
-		gi := generalIntFilter(a.conv.GoName())
-		if gi != a.conv.GoName() {
-			switch t := a.conv.(type) {
+func (a *baseParam) Type() Type {
+	// this logic cannot be put into getType because it must wait till all type's
+	// GoNames are settled.
+	if a.type_.GoName() != "" {
+		gi := generalIntFilter(a.type_.GoName())
+		if gi != a.type_.GoName() {
+			switch t := a.type_.(type) {
 			case *ReturnPtr:
 				return &ReturnPtr{newNum_("int", t.pointedType.CgoName(),
-					a.conv.Size())}
+					MachineSize)}
 			default:
-				return newNum_("int", t.CgoName(), a.conv.Size())
+				return newNum_("int", t.CgoName(), MachineSize)
 			}
 		}
 	}
-	return a.conv
+	return a.type_
 }
 
 func (a *Argument) IsOut() bool {
@@ -210,11 +220,11 @@ func (a *Argument) IsOut() bool {
 }
 
 func (a *baseParam) ToCgo(w io.Writer, assign string) {
-	a.Conv().ToCgo(w, assign, a.GoName(), a.CgoName())
+	a.Type().ToCgo(w, assign, a.GoName(), a.CgoName())
 }
 
 func (a *baseParam) ToGo(w io.Writer, assign string) {
-	a.Conv().ToGo(w, assign, a.GoName(), a.CgoName())
+	a.Type().ToGo(w, assign, a.GoName(), a.CgoName())
 }
 
 func (a *baseParam) CgoName() string {
@@ -226,15 +236,15 @@ func (a *baseParam) GoName() string {
 }
 
 func (a *baseParam) GoTypeName() string {
-	return a.Conv().GoName()
+	return a.Type().GoName()
 }
 
 func (a *baseParam) CgoTypeName() string {
-	return a.Conv().CgoName()
+	return a.Type().CgoName()
 }
 
 func (a *Argument) IsPtr() bool {
-	_, ok := a.Conv().(*Ptr)
+	_, ok := a.Type().(*Ptr)
 	return ok
 }
 
@@ -248,18 +258,9 @@ func (as Arguments) ToParams() Params {
 	return ps
 }
 
-type ReceiverType interface {
-	GoName() string
-	AddMethod(m *Method)
-}
-
 type ReceiverArg struct {
 	*Argument
-	Type ReceiverType
-}
-
-func (r *ReceiverArg) ReceiverTypeName() string {
-	return r.Type.GoName()
+	EqualType ReceiverType
 }
 
 type Return struct {
@@ -274,7 +275,7 @@ type CallbackFunc struct {
 	goName        string
 	cFuncName     string
 	CallbackIndex int
-	FuncType
+	baseFunc
 }
 
 func (f CallbackFunc) Declare(w io.Writer) {
@@ -319,8 +320,8 @@ func (f CallbackFunc) returns(w io.Writer) {
 	}
 }
 
-func (f CallbackFunc) internalFunc() *FuncType {
-	return &FuncType{
+func (f CallbackFunc) internalFunc() *baseFunc {
+	return &baseFunc{
 		GoParams: f.GoParams.Filter(func(i int, a Param) (Param, bool) {
 			return a, i != f.CallbackIndex
 		}),
@@ -331,11 +332,8 @@ func (f CallbackFunc) callbackArg() *Argument {
 	ca := f.CArgs[f.CallbackIndex]
 	return &Argument{
 		baseParam{
-			baseType{
-				ca.GoName(),
-				ca.CgoName(),
-				0,
-			},
+			ca.GoName(),
+			ca.CgoName(),
 			f.internalFunc(),
 		},
 		false,
