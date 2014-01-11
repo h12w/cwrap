@@ -57,9 +57,11 @@ func (pac *Package) write(g, c, h io.Writer) error {
 	}
 
 	// populate variables (and collect types)
-	variables := make([]*Variable, len(pac.Variables))
-	for i, v := range pac.Variables {
-		variables[i] = pac.newVariable(v)
+	variables := make([]*Variable, 0, len(pac.Variables))
+	for _, v := range pac.Variables {
+		if pac.exported(v.CName(), v.File()) {
+			variables = append(variables, pac.newVariable(v))
+		}
 	}
 
 	// populate fields (and collect types till no new types come out)
@@ -122,10 +124,16 @@ func (pac *Package) write(g, c, h io.Writer) error {
 
 	// add all enumerations regardless of its appearance in functions
 	for _, em := range pac.Enumerations {
+		if pac.excluded(em.CName()) || !pac.included(em.File()) {
+			continue
+		}
 		e := pac.declareEqualType(em).(*Enum)
-		e.goName = pac.globalName(e)
+		goName := pac.globalName(e)
+		if goName != "" {
+			e.goName = goName
+		}
 		for i, v := range e.Values {
-			e.Values[i].goName = pac.localName(v)
+			e.Values[i].goName = pac.globalName(v)
 		}
 	}
 	// then remove the enumeration if it is typedefed.
@@ -203,16 +211,11 @@ func (pac *Package) write(g, c, h io.Writer) error {
 }
 
 func (pac *Package) writeDecl(w io.Writer, keyword string, d Decl) {
-	// some enums have no names but only values
-	if IsEnum(d) {
-		if pac.excluded(d.CName()) || !pac.included(d.File()) || contains(d.GoName(), ".") {
-			return
-		}
-	} else if !pac.exported(d.CName(), d.File()) {
+	if pac.excluded(d.CName()) || contains(d.GoName(), ".") {
 		return
 	}
-	fp(w, "// ", d.CName())
 	if d.GoName() != "" {
+		fp(w, "// ", d.CName())
 		fpn(w, keyword, " ", d.GoName(), " ")
 	}
 	d.WriteSpec(w)

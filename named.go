@@ -47,16 +47,25 @@ func (e *Enum) WriteSpec(w io.Writer) {
 	if e.GoName() != "" {
 		fp(w, e.baseGoName)
 	}
-	fp(w, "const (")
+	valid := false
 	length := 0
 	for _, v := range e.Values {
+		if v.valid() {
+			valid = true
+		}
 		l := len(hex(v.value, 0))
 		if length < l {
 			length = l
 		}
 	}
+	if !valid {
+		return
+	}
+	fp(w, "const (")
 	for _, v := range e.Values {
-		fp(w, v.goName, "=", hex(v.value, length))
+		if v.valid() {
+			fp(w, v.goName, "=", hex(v.value, length))
+		}
 	}
 	fp(w, ")")
 }
@@ -69,6 +78,10 @@ type EnumValue struct {
 
 func (v *EnumValue) GoName() string {
 	return v.goName
+}
+
+func (v *EnumValue) valid() bool {
+	return v.goName != "" && !contains(v.goName, ".")
 }
 
 type Typedef struct {

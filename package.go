@@ -202,6 +202,8 @@ func (pac *Package) prepare() error {
 			return err
 		}
 	}
+	// reset localNames
+	pac.localNames = make(map[string]string)
 	return nil
 }
 
