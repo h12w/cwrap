@@ -10,14 +10,14 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"runtime"
-	"syscall"
 )
 
 var (
-	GOPATH, _ = syscall.Getenv("GOPATH")
-	OutputDir = GOPATH + "/src/"
+	GOPATHs   = filepath.SplitList(os.Getenv("GOPATH"))
+	OutputDir = GOPATHs[0] + "/src/"
 )
 
 type Header struct {
