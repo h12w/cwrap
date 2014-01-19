@@ -49,6 +49,7 @@ Then just call
 Examples
 --------
 In the examples directory, there are C libraries that I have successfully applied Cwrap, including:
+* Cairo
 * GSL (GNU Scientific Library)
 * MuPDF
 * PLplot
