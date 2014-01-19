@@ -56,6 +56,10 @@ In the examples directory, there are C libraries that I have successfully applie
 
 You are very welcome to submit examples you think useful to others.
 
+Applications
+------------
+* gr: A minimal PDF viewer based on SDL2 and MuPDF (https://github.com/hailiang/gr)
+
 Issue Report
 ------------
 Cwrap may not cover every possible case and fails to come up with a corrresonding Go type or convertion, then the generated code may not be able to compile. When this happens, do the following steps:
@@ -67,8 +71,8 @@ Cwrap may not cover every possible case and fails to come up with a corrresondin
 TODO
 ----
 * Go idiomatic error handling (return error for each function/method).
-* Alignment and padding of generated Go struct fields may need more careful checking (currently no checking is done at all, Cwrap just naively assume the same rules are applied to both Go and C).
 * Godoc documentation.
+* Alignment and padding of generated Go struct fields may need more careful checking (It just works fine for now, and I won't spend time on this until a real bug is found).
 
 Limitations
 -----------
