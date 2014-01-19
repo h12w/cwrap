@@ -77,7 +77,7 @@ func snakeToCamel(s string) string {
 func upperName(s string, re *regexp.Regexp) string {
 	if re != nil {
 		m := re.FindStringSubmatch(s)
-		if len(m) > 1 && m[1] != "" {
+		if len(m) > 1 && len(m[1]) > 2 {
 			s = m[1]
 		}
 	}
