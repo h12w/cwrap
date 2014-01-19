@@ -81,6 +81,9 @@ func upperName(s string, re *regexp.Regexp) string {
 			s = m[1]
 		}
 	}
+	if len(s) > 3 {
+		s = trimSuffix(s, "_t")
+	}
 	return snakeToCamel(s)
 }
 

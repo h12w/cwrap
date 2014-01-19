@@ -404,7 +404,11 @@ func goParamDeclListTypeOnly(w io.Writer, ds ...Param) {
 func cgoParamDeclList(w io.Writer, ds ...Param) {
 	fpn(w, "(")
 	for _, d := range ds {
-		fpn(w, d.CgoName(), " ", d.CgoTypeName(), ",")
+		cgoType := d.CgoTypeName()
+		if cgoType != "*C.char" && hasPrefix(cgoType, "*") {
+			cgoType = "unsafe.Pointer"
+		}
+		fpn(w, d.CgoName(), " ", cgoType, ",")
 	}
 	fpn(w, ")")
 }

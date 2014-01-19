@@ -44,9 +44,10 @@ func (e *Enum) GoName() string {
 }
 
 func (e *Enum) WriteSpec(w io.Writer) {
-	if e.GoName() != "" {
-		fp(w, e.baseGoName)
-	}
+	fp(w, e.baseGoName)
+}
+
+func (e *Enum) WriteMethods(w io.Writer) {
 	valid := false
 	length := 0
 	for _, v := range e.Values {
@@ -61,6 +62,7 @@ func (e *Enum) WriteSpec(w io.Writer) {
 	if !valid {
 		return
 	}
+	fp(w, "")
 	fp(w, "const (")
 	for _, v := range e.Values {
 		if v.valid() {
@@ -68,6 +70,7 @@ func (e *Enum) WriteSpec(w io.Writer) {
 		}
 	}
 	fp(w, ")")
+
 }
 
 type EnumValue struct {
@@ -122,11 +125,17 @@ func (d *Typedef) WriteSpec(w io.Writer) {
 }
 
 func (d *Typedef) WriteMethods(w io.Writer) {
-	if u, ok := d.literal.(*Union); ok {
-		goName := u.GoName()
-		u.SetGoName(d.GoName())
-		u.WriteMethods(w)
-		u.SetGoName(goName)
+	switch t := d.literal.(type) {
+	case *Enum:
+		goName := t.GoName()
+		t.SetGoName(d.GoName())
+		t.WriteMethods(w)
+		t.SetGoName(goName)
+	case *Union:
+		goName := t.GoName()
+		t.SetGoName(d.GoName())
+		t.WriteMethods(w)
+		t.SetGoName(goName)
 	}
 	d.Methods.WriteMethods(w)
 }

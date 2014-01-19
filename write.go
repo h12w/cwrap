@@ -169,6 +169,7 @@ func (pac *Package) write(g, c, h io.Writer) error {
 	fp(g, "/*")
 	fp(g, "#include <", pac.From.File, ">")
 	fp(g, `#include "`, path.Base(pac.hFile()), `"`)
+	fp(g, "#include <stdlib.h>")
 	for _, d := range pac.From.CgoDirectives {
 		fp(g, "#cgo ", d)
 	}
@@ -217,8 +218,8 @@ func (pac *Package) writeDecl(w io.Writer, keyword string, d Decl) {
 	if d.GoName() != "" {
 		fp(w, "// ", d.CName())
 		fpn(w, keyword, " ", d.GoName(), " ")
+		d.WriteSpec(w)
 	}
-	d.WriteSpec(w)
 	if t, ok := d.(TypeDecl); ok {
 		t.WriteMethods(w)
 	}
