@@ -433,6 +433,7 @@ func cgoName(n string) string {
 func generalIntFilter(n string) string {
 	switch n {
 	case "int32", "uint32":
+	case "int64", "uint64":
 		return "int"
 	}
 	return n
