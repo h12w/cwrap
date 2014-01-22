@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	HeaderDir = "/usr/local/include/"
-	PacDir    = "go-plplot/"
+	HeaderDir  = "/usr/local/include/"
+	HeaderFile = "plplot/plplot.h"
+	PacDir     = "go-plplot/"
 )
 
 var (
@@ -19,8 +20,8 @@ var (
 		PacName: "c",
 		PacPath: PacDir + "c",
 		From: cwrap.Header{
-			Dir:         "/usr/local/include/",
-			File:        "plplot/plplot.h",
+			Dir:         HeaderDir,
+			File:        HeaderFile,
 			NamePattern: `\Ac_pl(.*)`,
 			BoolTypes:   []string{"PLBOOL"},
 			Excluded: []string{
