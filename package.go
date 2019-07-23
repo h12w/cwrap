@@ -5,7 +5,6 @@
 package cwrap
 
 import (
-	gcc "github.com/hailiang/go-gccxml"
 	"io"
 	"io/ioutil"
 	"os"
@@ -13,6 +12,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+
+	gcc "github.com/hailiang/go-gccxml"
 )
 
 var (
@@ -107,7 +108,7 @@ func (pac *Package) loadXmlDoc() error {
 	}
 	pac.From.Write(f)
 	f.Close()
-	pac.XmlDoc, err = gcc.Xml{f.Name(), pac.From.GccXmlArgs}.Doc()
+	pac.XmlDoc, err = gcc.Xml{File: f.Name(), Args: pac.From.GccXmlArgs, CastXml: true}.Doc()
 	//	pac.XmlDoc.Print()
 	return err
 }
@@ -214,7 +215,7 @@ func (pac *Package) GenConst(file string) error {
 		return err
 	}
 	defer f.Close()
-	ms, err := gcc.Xml{pac.From.FullPath(), pac.From.GccXmlArgs}.Macros()
+	ms, err := gcc.Xml{File: pac.From.FullPath(), Args: pac.From.GccXmlArgs, CastXml: true}.Macros()
 	if err != nil {
 		return err
 	}

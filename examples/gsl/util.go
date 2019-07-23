@@ -17,3 +17,5 @@ func c(err error) {
 		panic(err)
 	}
 }
+
+func main() {}

@@ -5,7 +5,7 @@
 package main
 
 import (
-	. "github.com/hailiang/cwrap"
+	. "h12.io/cwrap"
 	"testing"
 )
 

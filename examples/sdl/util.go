@@ -22,3 +22,5 @@ func c(err error) {
 func lines(s ...string) string {
 	return strings.Join(s, "\n")
 }
+
+func main() {}
