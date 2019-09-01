@@ -6,6 +6,8 @@ package cwrap
 
 import (
 	"io"
+
+	"h12.io/go-gccxml"
 )
 
 type baseFunc struct {
@@ -115,16 +117,17 @@ func (f *Function) ConvertToMethod() (*Method, bool) {
 	if len(f.CArgs) == 0 {
 		return nil, false
 	}
-	recType := f.CArgs[0].GoTypeName()
-	if f.CArgs[0].IsPtr() &&
+	first := f.CArgs[0]
+	recType := first.GoTypeName()
+	if first.IsPtr() &&
 		!contains(recType, ".") &&
 		!contains(recType, "[") &&
 		recType != "uintptr" {
-		if ref, ok := f.CArgs[0].type_.(*Ptr); ok {
+		if ref, ok := first.type_.(*Ptr); ok {
 			if r, ok := ref.pointedType.(ReceiverType); ok {
 				f.GoParams = f.GoParams[1:]
-				m := &Method{f, ReceiverArg{f.CArgs[0], r}}
-				m.Receiver.EqualType.AddMethod(m)
+				m := &Method{f, ReceiverArg{Argument: first, EqualType: r}}
+				r.AddMethod(m)
 				return m, true
 			}
 		}
@@ -197,6 +200,16 @@ type Argument struct {
 	isOut bool
 }
 
+func NewArgument(goName, cgoName string, typ Type) *Argument {
+	return &Argument{
+		baseParam: baseParam{
+			goName:  goName,
+			cgoName: cgoName,
+			type_:   typ,
+		},
+	}
+}
+
 func (a *baseParam) Type() Type {
 	// this logic cannot be put into getType because it must wait till all type's
 	// GoNames are settled.
@@ -205,10 +218,10 @@ func (a *baseParam) Type() Type {
 		if gi != a.type_.GoName() {
 			switch t := a.type_.(type) {
 			case *ReturnPtr:
-				return &ReturnPtr{newNum_("int", t.pointedType.CgoName(),
+				return &ReturnPtr{NewNum("int", t.pointedType.CgoName(),
 					MachineSize)}
 			default:
-				return newNum_("int", t.CgoName(), MachineSize)
+				return NewNum("int", t.CgoName(), MachineSize)
 			}
 		}
 	}
@@ -276,6 +289,7 @@ type CallbackFunc struct {
 	cFuncName     string
 	CallbackIndex int
 	baseFunc
+	CType *gccxml.FunctionType
 }
 
 func (f CallbackFunc) Declare(w io.Writer) {

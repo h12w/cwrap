@@ -7,18 +7,24 @@ package cwrap
 import (
 	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
 
-	gcc "github.com/hailiang/go-gccxml"
+	gcc "h12.io/go-gccxml"
 )
 
 var (
 	GOPATHs   = filepath.SplitList(os.Getenv("GOPATH"))
-	OutputDir = GOPATHs[0] + "/src/"
+	OutputDir = func() string {
+		if len(GOPATHs) > 0 {
+			return GOPATHs[0] + "/src/"
+		}
+		return "."
+	}()
 )
 
 type Header struct {
@@ -35,7 +41,7 @@ type Header struct {
 }
 
 func (h Header) FullPath() string {
-	file := h.Dir + h.File
+	file := path.Join(h.Dir, h.File)
 	if !fileExists(file) {
 		panic("Header file cannot be found: " + file)
 	}
@@ -61,12 +67,17 @@ type Package struct {
 	TypeRule map[string]string
 	ArgRule  map[string]string
 
+	// intermediate
+	Functions   []*Function
+	Callbacks   []CallbackFunc
+	TypeDeclMap TypeDeclMap
+	Variables   []*Variable
+
 	// Internal
-	pat         *regexp.Regexp
-	localNames  map[string]string
-	fileIds     SSet
-	boolSet     SSet
-	typeDeclMap TypeDeclMap
+	pat        *regexp.Regexp
+	localNames map[string]string
+	fileIds    SSet
+	boolSet    SSet
 	Statistics
 	*gcc.XmlDoc
 }
@@ -78,7 +89,7 @@ func (pac *Package) Load() (err error) {
 	pac.pat = regexp.MustCompile(pac.From.NamePattern)
 	pac.localNames = make(map[string]string)
 	pac.initBoolSet()
-	pac.typeDeclMap = make(TypeDeclMap)
+	pac.TypeDeclMap = make(TypeDeclMap)
 	if err := pac.loadXmlDoc(); err != nil {
 		return err
 	}
@@ -98,9 +109,9 @@ func (pac *Package) loadXmlDoc() error {
 	if pac.XmlDoc != nil {
 		return nil
 	}
-	f, err := ioutil.TempFile(".", "_cwrap-")
+	f, err := ioutil.TempFile(".", "_cwrap-*.h")
 	if err != nil {
-		return err
+		return Wrap(err)
 	}
 	defer os.Remove(f.Name())
 	for _, inc := range pac.Included {
@@ -159,50 +170,39 @@ func (pac *Package) hFile() string {
 }
 
 func (pac *Package) defaultFile() string {
-	return OutputDir + pac.PacPath + "/auto_" + runtime.GOARCH
+	return path.Join(OutputDir, pac.PacPath, "/auto_"+runtime.GOARCH)
 }
 
 func (pac *Package) createFile(file string) (io.WriteCloser, error) {
 	if err := os.MkdirAll(path.Dir(file), 0755); err != nil {
-		return nil, err
+		return nil, Wrap(err)
 	}
 	f, err := os.Create(file)
 	if err != nil {
-		return nil, err
+		return nil, Wrap(err)
 	}
 	return f, nil
 }
 
 func (pac *Package) Wrap() error {
-	g, err := pac.createFile(pac.goFile())
-	if err != nil {
+	if err := pac.Prepare(); err != nil {
 		return err
 	}
-	defer g.Close()
-	c, err := pac.createFile(pac.cFile())
-	if err != nil {
+	if err := pac.write(); err != nil {
 		return err
 	}
-	defer c.Close()
-	h, err := pac.createFile(pac.hFile())
-	if err != nil {
-		return err
-	}
-	defer h.Close()
-	if err := pac.prepare(); err != nil {
-		return err
-	}
-	if err := pac.write(g, c, h); err != nil {
-		return err
-	}
-	return gofmt(pac.goFile())
+	return nil
 }
 
-func (pac *Package) prepare() error {
+func (pac *Package) Prepare() error {
 	if pac.XmlDoc == nil {
 		if err := pac.Load(); err != nil {
 			return err
 		}
+		if err := pac.prepareFunctions(); err != nil {
+			return err
+		}
+		pac.prepareTypesAndNames()
 	}
 	// reset localNames
 	pac.localNames = make(map[string]string)
@@ -244,5 +244,5 @@ type Statistics struct {
 }
 
 func (s Statistics) Print() {
-	p(s.DefCount, "declarations wrapped.")
+	log.Print(s.DefCount, " declarations wrapped.")
 }

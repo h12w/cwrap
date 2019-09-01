@@ -2,26 +2,23 @@ package cwrap
 
 import (
 	"io"
+	"log"
 	"path"
 	"sort"
 )
 
-// Huge function to write all the stuff
-func (pac *Package) write(g, c, h io.Writer) error {
-	// C file starts
-	fp(c, `#include "_cgo_export.h"`)
-	fp(c, "")
-
+func (pac *Package) prepareFunctions() error {
 	// populate functions/callbacks (and collect types)
 	// write .h/.c directly
 	var functions []*Function
 	var callbacks []CallbackFunc
-	cm := NewSSet()
-	for _, fn := range pac.Functions {
+	callbackSet := NewSSet()
+	for _, fn := range pac.XmlDoc.Functions {
 		if len(fn.Ellipses) > 0 {
 			continue
 		}
 		if !pac.exported(fn.CName(), fn.File()) {
+			// log.Print("skip unexported function ", fn.CName(), " in ", fn.File())
 			continue
 		}
 		f := pac.newFunction(fn)
@@ -29,7 +26,7 @@ func (pac *Package) write(g, c, h io.Writer) error {
 			// Go file
 			callbackFunc := pac.newCallbackFunc(info)
 
-			if !cm.Has(callbackFunc.goName) {
+			if !callbackSet.Has(callbackFunc.goName) {
 				callbacks = append(callbacks, callbackFunc)
 			}
 
@@ -37,37 +34,36 @@ func (pac *Package) write(g, c, h io.Writer) error {
 			functions = append(functions, f1)
 			functions = append(functions, f2)
 
-			if !cm.Has(callbackFunc.goName) {
-				// H file
-				fpn(h, "extern ")
-				info.CType.WriteCDecl(h, callbackFunc.cFuncName)
-				fp(h, ";")
-				fp(h, "")
+			if !callbackSet.Has(callbackFunc.goName) {
 
-				// C file
-				info.CType.WriteCallbackStub(c, callbackFunc.cFuncName, callbackFunc.goName)
-				fp(c, "")
 			}
 
 			// add into set
-			cm.Add(callbackFunc.goName)
+			callbackSet.Add(callbackFunc.goName)
 		} else {
 			functions = append(functions, f)
 		}
 	}
+	pac.Functions = functions
+	pac.Callbacks = callbacks
 
 	// populate variables (and collect types)
 	variables := make([]*Variable, 0, len(pac.Variables))
-	for _, v := range pac.Variables {
+	for _, v := range pac.XmlDoc.Variables {
 		if pac.exported(v.CName(), v.File()) {
 			variables = append(variables, pac.newVariable(v))
 		}
 	}
+	pac.Variables = variables
 
+	return nil
+}
+
+func (pac *Package) prepareTypesAndNames() {
 	// populate fields (and collect types till no new types come out)
 	for {
-		cnt := len(pac.typeDeclMap)
-		pac.typeDeclMap.Each(func(d TypeDecl) {
+		cnt := len(pac.TypeDeclMap)
+		pac.TypeDeclMap.Each(func(d TypeDecl) {
 			switch s := d.(type) {
 			case *Struct:
 				if s.Fields == nil {
@@ -79,7 +75,7 @@ func (pac *Package) write(g, c, h io.Writer) error {
 				}
 			}
 		})
-		if cnt == len(pac.typeDeclMap) {
+		if cnt == len(pac.TypeDeclMap) {
 			break
 		}
 	}
@@ -88,9 +84,9 @@ func (pac *Package) write(g, c, h io.Writer) error {
 
 	// find linked list, remove the struct and keep the typedef, must go before
 	// type names are assigned, so that the typedef can get proper names.
-	pac.typeDeclMap.Each(func(d TypeDecl) {
+	pac.TypeDeclMap.Each(func(d TypeDecl) {
 		if t, ok := d.(*Typedef); ok {
-			if o, ok := pac.typeDeclMap[t.rootId]; ok && o.CName() == t.CName() {
+			if o, ok := pac.TypeDeclMap[t.rootId]; ok && o.CName() == t.CName() {
 				excluded = append(excluded, t.rootId)
 				t.id = t.rootId
 			}
@@ -98,7 +94,7 @@ func (pac *Package) write(g, c, h io.Writer) error {
 	})
 
 	// assign names to types, if empty, remove it.
-	pac.typeDeclMap.Each(func(d TypeDecl) {
+	pac.TypeDeclMap.Each(func(d TypeDecl) {
 		goName := pac.globalName(d)
 		if goName != "" {
 			d.SetGoName(goName)
@@ -111,15 +107,15 @@ func (pac *Package) write(g, c, h io.Writer) error {
 	// receiver must be settled first.
 	{
 		var fs []*Function
-		for _, f := range functions {
+		for _, f := range pac.Functions {
 			if m, ok := f.ConvertToMethod(); ok {
-				m.SetGoName(pac.upperName(f.CName()))
+				m.SetGoName(pac.UpperName(f.CName()))
 			} else {
 				f.SetGoName(pac.localName(f))
 				fs = append(fs, f)
 			}
 		}
-		functions = fs
+		pac.Functions = fs
 	}
 
 	// add all enumerations regardless of its appearance in functions
@@ -137,9 +133,9 @@ func (pac *Package) write(g, c, h io.Writer) error {
 		}
 	}
 	// then remove the enumeration if it is typedefed.
-	pac.typeDeclMap.Each(func(d TypeDecl) {
+	pac.TypeDeclMap.Each(func(d TypeDecl) {
 		if t, ok := d.(*Typedef); ok {
-			if e, ok := t.literal.(*Enum); ok {
+			if e, ok := t.Literal.(*Enum); ok {
 				excluded = append(excluded, e.Id())
 			}
 		}
@@ -147,28 +143,90 @@ func (pac *Package) write(g, c, h io.Writer) error {
 
 	// optimize 2nd level names like fields and methods, must go after all
 	// global level names are settled.
-	pac.typeDeclMap.Each(func(d TypeDecl) {
+	pac.TypeDeclMap.Each(func(d TypeDecl) {
 		if o, ok := d.(NameOptimizer); ok {
 			o.OptimizeNames()
 		}
 	})
 
 	// assign name to variables
-	for _, v := range variables {
+	for _, v := range pac.Variables {
 		v.SetGoName(pac.localName(v))
 	}
 
 	// remove excluded types
 	for _, id := range excluded {
-		pac.typeDeclMap.Delete(id)
+		pac.TypeDeclMap.Delete(id)
+	}
+}
+
+// Huge function to write all the stuff
+func (pac *Package) write() error {
+	if len(pac.Callbacks) > 0 {
+		c, err := pac.createFile(pac.cFile())
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+		h, err := pac.createFile(pac.hFile())
+		if err != nil {
+			return err
+		}
+		defer h.Close()
+		if err := pac.writeCFile(c, h); err != nil {
+			return err
+		}
+		log.Print("written to ", pac.cFile())
+		log.Print("written to ", pac.hFile())
 	}
 
+	g, err := pac.createFile(pac.goFile())
+	if err != nil {
+		return err
+	}
+	defer g.Close()
+	if err := pac.writeGoFile(g); err != nil {
+		return err
+	}
+	if err := gofmt(pac.goFile()); err != nil {
+		return err
+	}
+
+	log.Print("written to ", pac.goFile())
+	pac.Statistics.Print()
+	p()
+
+	return nil
+}
+
+func (pac *Package) writeCFile(c, h io.Writer) error {
+	// C file starts
+	fp(c, `#include "_cgo_export.h"`)
+	fp(c, "")
+
+	for _, callbackFunc := range pac.Callbacks {
+		// H file
+		fpn(h, "extern ")
+		callbackFunc.CType.WriteCDecl(h, callbackFunc.cFuncName)
+		fp(h, ";")
+		fp(h, "")
+
+		// C file
+		callbackFunc.CType.WriteCallbackStub(c, callbackFunc.cFuncName, callbackFunc.goName)
+		fp(c, "")
+	}
+	return nil
+}
+
+func (pac *Package) writeGoFile(g io.Writer) error {
 	// Go file starts
 	fp(g, "package ", pac.PacName)
 	fp(g, "")
 	fp(g, "/*")
 	fp(g, "#include <", pac.From.File, ">")
-	fp(g, `#include "`, path.Base(pac.hFile()), `"`)
+	if len(pac.Callbacks) > 0 {
+		fp(g, `#include "`, path.Base(pac.hFile()), `"`)
+	}
 	fp(g, "#include <stdlib.h>")
 	for _, d := range pac.From.CgoDirectives {
 		fp(g, "#cgo ", d)
@@ -184,30 +242,24 @@ func (pac *Package) write(g, c, h io.Writer) error {
 	fp(g, ")")
 	fp(g, "")
 
-	for _, v := range variables {
+	for _, v := range pac.Variables {
 		pac.writeDecl(g, "var", v)
 	}
 
-	ds := pac.typeDeclMap.ToSlice()
+	ds := pac.TypeDeclMap.ToSlice()
 	for _, d := range ds {
 		pac.writeDecl(g, "type", d)
 		fp(g, "")
 	}
 
-	for _, f := range functions {
+	for _, f := range pac.Functions {
 		pac.writeDecl(g, "func", f)
 	}
 
-	for _, f := range callbacks {
+	for _, f := range pac.Callbacks {
 		f.Declare(g)
 	}
 
-	p("Succesfully written to:")
-	p(pac.goFile())
-	p(pac.cFile())
-	p(pac.hFile())
-	pac.Statistics.Print()
-	p()
 	return nil
 }
 
@@ -215,7 +267,8 @@ func (pac *Package) writeDecl(w io.Writer, keyword string, d Decl) {
 	if pac.excluded(d.CName()) || contains(d.GoName(), ".") {
 		return
 	}
-	if d.GoName() != "" {
+	if d.GoName() != "" &&
+		d.Id() != "" { // is not simple typedef
 		fp(w, "// ", d.CName())
 		fpn(w, keyword, " ", d.GoName(), " ")
 		d.WriteSpec(w)
@@ -242,7 +295,7 @@ func (pac *Package) globalName(o CNamer) string {
 
 // upper name that is unique within the package
 func (pac *Package) localName(o CNamer) string {
-	n := pac.upperName(o.CName())
+	n := pac.UpperName(o.CName())
 	if sid, exists := pac.localNames[n]; !exists || o.Id() == sid {
 		pac.localNames[n] = o.Id()
 		return n
@@ -258,7 +311,7 @@ func (pac *Package) localName(o CNamer) string {
 }
 
 // upper camel name
-func (pac *Package) upperName(cName string) string {
+func (pac *Package) UpperName(cName string) string {
 	return upperName(cName, pac.pat)
 }
 
@@ -267,7 +320,7 @@ func (pac *Package) isBool(cTypeName string) bool {
 }
 
 func (pac *Package) declare(d TypeDecl) {
-	pac.typeDeclMap[d.Id()] = d
+	pac.TypeDeclMap[d.Id()] = d
 }
 
 func (pac *Package) excluded(cName string) bool {
@@ -339,7 +392,7 @@ func (m TypeDeclMap) Each(visit func(d TypeDecl)) {
 func eachDecl(d TypeDecl, visit func(TypeDecl)) {
 	visit(d)
 	if t, ok := d.(*Typedef); ok {
-		if dd, ok := t.literal.(TypeDecl); ok {
+		if dd, ok := t.Literal.(TypeDecl); ok {
 			eachDecl(dd, visit)
 		}
 	}

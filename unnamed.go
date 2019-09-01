@@ -8,6 +8,31 @@ import (
 	"io"
 )
 
+type Void struct {
+}
+
+func (v *Void) WriteSpec(w io.Writer) {
+	fp(w, "nil")
+}
+
+func (v *Void) Size() int {
+	return 0
+}
+
+func (v *Void) GoName() string {
+	return "int /* void */"
+}
+
+func (v *Void) CgoName() string {
+	return "/* void */"
+}
+
+func (v *Void) ToCgo(w io.Writer, assign, g, c string) {
+}
+
+func (v *Void) ToGo(w io.Writer, assign, g, c string) {
+}
+
 type Num struct {
 	baseEqualType
 }
@@ -158,14 +183,14 @@ func (t *Ptr) Size() int {
 }
 
 func (t *Ptr) GoName() string {
-	if t.pointedType == nil || t.pointedType.GoName() == "" {
+	if t.pointedType.Size() == 0 || t.pointedType.GoName() == "" {
 		return "uintptr"
 	}
 	return "*" + t.pointedType.GoName()
 }
 
 func (t *Ptr) CgoName() string {
-	if t.pointedType == nil || t.pointedType.CgoName() == "" {
+	if t.pointedType.Size() == 0 || t.pointedType.CgoName() == "" {
 		return "unsafe.Pointer"
 	}
 	return "*" + t.pointedType.CgoName()

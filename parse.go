@@ -6,9 +6,10 @@ package cwrap
 
 import (
 	"fmt"
-	gcc "github.com/hailiang/go-gccxml"
 	"io"
 	"reflect"
+
+	gcc "h12.io/go-gccxml"
 )
 
 var goNumMap = initNumMap()
@@ -34,19 +35,19 @@ func initNumMap() map[gcc.NumInfo]string {
 }
 
 func (pac *Package) getEqualType(gt gcc.Type, declare bool) EqualType {
-	if t, ok := pac.typeDeclMap[gt.Id()]; ok {
+	if t, ok := pac.TypeDeclMap[gt.Id()]; ok {
 		return t
 	}
 	// hard rule
 	if nt, ok := gt.(gcc.Named); ok {
 		if n, ok := pac.TypeRule[nt.CName()]; ok {
-			return newNum_(n, cgoName(nt.CName()), gt.Size())
+			return NewNum(n, cgoName(nt.CName()), gt.Size())
 		}
 	}
 	switch t := gt.(type) {
 	case *gcc.FundamentalType:
 		if t.CName() == "void" {
-			return nil
+			return &Void{}
 		} else {
 			return newNum(t)
 		}
@@ -73,8 +74,8 @@ func (pac *Package) getEqualType(gt gcc.Type, declare bool) EqualType {
 	case *gcc.PointerType:
 		return pac.newPtr(t.PointedType())
 	case *gcc.Typedef:
-		r := pac.newTypedef(t)
-		if IsVoid(r.literal) {
+		r := pac.NewTypedef(t)
+		if IsVoid(r.Literal) {
 			return nil
 		}
 		if declare {
@@ -96,7 +97,7 @@ func IsEnum(v interface{}) bool {
 	case *Enum:
 		return true
 	case *Typedef:
-		return IsEnum(t.literal)
+		return IsEnum(t.Literal)
 	}
 	return false
 }
@@ -197,13 +198,13 @@ func (pac *Package) newReturn(gt gcc.Type) *Return {
 }
 
 func newNum(t *gcc.FundamentalType) *Num {
-	return newNum_(
+	return NewNum(
 		goNumMap[gcc.NumInfoFromGccName(t.CName())],
 		gcc.NumCgoNameFromGccName(t.CName()),
 		t.Size())
 }
 
-func newNum_(goName, cgoName string, size int) *Num {
+func NewNum(goName, cgoName string, size int) *Num {
 	return &Num{baseEqualType{goName, cgoName, size, NumConv}}
 }
 
@@ -257,7 +258,7 @@ func (pac *Package) newSliceSlice(elemType gcc.Type) *SliceSlice {
 }
 
 func (pac *Package) newSlice(elemType gcc.Type) *Slice {
-	return &Slice{pac.declareEqualType(elemType)}
+	return &Slice{elementType: pac.declareEqualType(elemType)}
 }
 
 func newStructWithoutFields(t *gcc.Struct) *Struct {
@@ -280,7 +281,21 @@ func (pac *Package) newStructFields(fields gcc.Fields) []StructField {
 	return fs
 }
 
-func (pac *Package) newTypedef(t *gcc.Typedef) *Typedef {
+func NewSimpleTypeDef(cName, goName string, size int) *Typedef {
+	return &Typedef{
+		baseCNamer: baseCNamer{
+			cName: cName,
+		},
+		baseEqualType: baseEqualType{
+			cgoName: cgoName(cName),
+			size:    size,
+			conv:    NumConv,
+		},
+		Literal: NewNum(goName, "", size),
+	}
+}
+
+func (pac *Package) NewTypedef(t *gcc.Typedef) *Typedef {
 	var literal SpecWriter
 	if t.IsEnum() {
 		literal = pac.getEqualType(t.Base(), true)
@@ -300,7 +315,7 @@ func (pac *Package) newTypedef(t *gcc.Typedef) *Typedef {
 			size:    t.Size(),
 			conv:    conv,
 		},
-		literal: literal,
+		Literal: literal,
 		rootId:  t.Root().Id(),
 	}
 	return td
@@ -377,7 +392,7 @@ func (pac *Package) TransformOriginalFunc(
 }
 
 func (pac *Package) newCallbackFunc(info *gcc.CallbackInfo) CallbackFunc {
-	callbackName := snakeToLowerCamel(pac.upperName(info.CName)) + "Callback"
+	callbackName := snakeToLowerCamel(pac.UpperName(info.CName)) + "Callback"
 	cArgs := pac.newArgs(info.CType.Arguments)
 	for i, a := range cArgs {
 		if r, ok := a.type_.(*ReturnPtr); ok {
@@ -398,6 +413,7 @@ func (pac *Package) newCallbackFunc(info *gcc.CallbackInfo) CallbackFunc {
 			CArgs:    cArgs,
 			Return:   returns,
 		},
+		CType: info.CType,
 	}
 }
 

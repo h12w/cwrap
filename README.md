@@ -59,7 +59,7 @@ You are very welcome to submit examples you think useful to others.
 
 Applications
 ------------
-* gr: A minimal PDF viewer based on SDL2 and MuPDF (https://github.com/hailiang/gr)
+* gr: A minimal PDF viewer based on SDL2 and MuPDF (https://h12.io/gr)
 
 Issue Report
 ------------

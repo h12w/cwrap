@@ -90,42 +90,48 @@ func (v *EnumValue) valid() bool {
 type Typedef struct {
 	baseCNamer
 	baseEqualType
-	literal SpecWriter
+	Literal SpecWriter
 	Methods
 	rootId string
 }
 
 func (d *Typedef) GoName() string {
 	if d.goName == "" {
+		// if root := d.Root(); root != nil {
 		d.goName = d.Root().GoName()
+		// } else {
+		// d.goName = d.CName()
+		// }
 	}
 	return d.goName
 }
 
 func (d *Typedef) Root() EqualType {
-	switch t := d.literal.(type) {
+	switch t := d.Literal.(type) {
 	case *Typedef:
 		return t.Root()
+	case EqualType:
+		return t
 	}
-	return d.literal.(EqualType)
+	return nil
 }
 
 func (d *Typedef) OptimizeNames() {
 	d.Methods.OptimizeNames(d.GoName())
-	if o, ok := d.literal.(NameOptimizer); ok {
+	if o, ok := d.Literal.(NameOptimizer); ok {
 		o.OptimizeNames()
 	}
-	if s, ok := d.literal.(*Struct); ok {
+	if s, ok := d.Literal.(*Struct); ok {
 		s.OptimizeFieldNames(d.Methods)
 	}
 }
 
 func (d *Typedef) WriteSpec(w io.Writer) {
-	d.literal.WriteSpec(w)
+	d.Literal.WriteSpec(w)
 }
 
 func (d *Typedef) WriteMethods(w io.Writer) {
-	switch t := d.literal.(type) {
+	switch t := d.Literal.(type) {
 	case *Enum:
 		goName := t.GoName()
 		t.SetGoName(d.GoName())

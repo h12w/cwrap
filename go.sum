@@ -1,2 +1,4 @@
-github.com/hailiang/go-gccxml v0.0.0-20181210111312-d37ec080b7c3 h1:0ZRntHguLunXwXdWKMr3qcEKpPntKl+RwKdmlre4vEQ=
-github.com/hailiang/go-gccxml v0.0.0-20181210111312-d37ec080b7c3/go.mod h1:7fT/U0Ikxc8hH/KMg07exmJUB8KdmN8kN+4b8yGKO+c=
+h12.io/go-gccxml v0.0.0-20181210111312-d37ec080b7c3 h1:0ZRntHguLunXwXdWKMr3qcEKpPntKl+RwKdmlre4vEQ=
+h12.io/go-gccxml v0.0.0-20181210111312-d37ec080b7c3/go.mod h1:7fT/U0Ikxc8hH/KMg07exmJUB8KdmN8kN+4b8yGKO+c=
+golang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7 h1:9zdDQZ7Thm29KFXgAX/+yaf3eVbP7djjWp/dXAppNCc=
+golang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
