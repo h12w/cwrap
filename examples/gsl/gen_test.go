@@ -5,12 +5,13 @@
 package main
 
 import (
-	. "h12.io/cwrap"
 	"testing"
+
+	. "h12.io/cwrap"
 )
 
 const (
-	HeaderDir    = "/usr/include/"
+	HeaderDir    = "/usr/local/include/"
 	PacDir       = "go-gsl/"
 	CgoDirective = "LDFLAGS: -lgsl -lgslcblas"
 )
