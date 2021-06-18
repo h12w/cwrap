@@ -215,7 +215,7 @@ func (pac *Package) newArray(t *gcc.ArrayType) EqualType {
 func newEnum(t *gcc.Enumeration) *Enum {
 	e := &Enum{
 		baseEqualType: baseEqualType{
-			cgoName: cgoName(t.CName()),
+			cgoName: cgoName("enum_" + t.CName()),
 			size:    t.Size(),
 			conv:    NumConv,
 		},

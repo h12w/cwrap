@@ -182,15 +182,24 @@ func (t *Ptr) Size() int {
 	return MachineSize
 }
 
+func (t *Ptr) isUnknownPtr() bool {
+	// return t.pointedType.Size() == 0 || t.pointedType.GoName() == ""
+	switch t.pointedType.CgoName() {
+	case "", "/* void */":
+		return true
+	}
+	return false
+}
+
 func (t *Ptr) GoName() string {
-	if t.pointedType.Size() == 0 || t.pointedType.GoName() == "" {
+	if t.isUnknownPtr() {
 		return "uintptr"
 	}
 	return "*" + t.pointedType.GoName()
 }
 
 func (t *Ptr) CgoName() string {
-	if t.pointedType.Size() == 0 || t.pointedType.CgoName() == "" {
+	if t.isUnknownPtr() {
 		return "unsafe.Pointer"
 	}
 	return "*" + t.pointedType.CgoName()
