@@ -90,5 +90,5 @@ var (
 func Test(*testing.T) {
 	c(pdf.Wrap())
 	c(fz.Wrap())
-	// fz.DebugPrint()
+	// os.RemoveAll("./temp")
 }

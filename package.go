@@ -17,6 +17,8 @@ import (
 	gcc "h12.io/go-gccxml"
 )
 
+const tempDir = "./temp/"
+
 var (
 	GOPATHs   = filepath.SplitList(os.Getenv("GOPATH"))
 	OutputDir = func() string {
@@ -109,19 +111,33 @@ func (pac *Package) loadXmlDoc() error {
 	if pac.XmlDoc != nil {
 		return nil
 	}
-	f, err := ioutil.TempFile(".", "_cwrap-*.h")
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return err
+	}
+	f, err := ioutil.TempFile(tempDir, "_cwrap-*.h")
 	if err != nil {
 		return Wrap(err)
 	}
-	defer os.Remove(f.Name())
 	for _, inc := range pac.Included {
 		inc.From.Write(f)
 	}
 	pac.From.Write(f)
 	f.Close()
-	pac.XmlDoc, err = gcc.Xml{File: f.Name(), Args: pac.From.GccXmlArgs, CastXml: true}.Doc()
-	//	pac.XmlDoc.Print()
-	return err
+	xmlDocCfg := gcc.Xml{File: f.Name(), Args: pac.From.GccXmlArgs, CastXml: true}
+	xmlDoc, err := xmlDocCfg.Doc()
+	if err != nil {
+		return err
+	}
+	pac.XmlDoc = xmlDoc
+	xmlFile, err := os.Create(path.Join(tempDir, path.Base(f.Name())+".xml"))
+	if err != nil {
+		return err
+	}
+	defer xmlFile.Close()
+	if err := xmlDocCfg.Save(xmlFile); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (pac *Package) initBoolSet() {
