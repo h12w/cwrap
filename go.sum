@@ -2,3 +2,5 @@ golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 h1:go1bK/D/BFZV2I8cIQd1N
 golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
 h12.io/go-gccxml v0.0.0-20201008163211-7cb48f5d5a0b h1:iOfQv9fhjkhUjSf/WETh7IYBoDdU2+6PUzN7do/7bLI=
 h12.io/go-gccxml v0.0.0-20201008163211-7cb48f5d5a0b/go.mod h1:dNVxjwUX1UV9pjlJXQmylUVyrxwF+Do7pSw4vpdJPCc=
+h12.io/go-gccxml v0.0.0-20230518182913-669bcdfdb68b h1:PIsyGEoXaB1kpi3/syol5/kpdjS8lF/H5oBBn32TTPc=
+h12.io/go-gccxml v0.0.0-20230518182913-669bcdfdb68b/go.mod h1:dNVxjwUX1UV9pjlJXQmylUVyrxwF+Do7pSw4vpdJPCc=

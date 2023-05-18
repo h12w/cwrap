@@ -5,8 +5,10 @@
 package main
 
 import (
-	. "h12.io/cwrap"
+	"fmt"
 	"testing"
+
+	. "h12.io/cwrap"
 )
 
 /*
@@ -19,9 +21,14 @@ TODO: error handling of mupdf by weird setjmp/longjmp
 */
 
 const (
-	HeaderDir = "/usr/local/include/"
+	// CLibRoot = "/usr/local"
+	CLibRoot  = "/usr"
+	HeaderDir = CLibRoot + "/include/"
 	PacDir    = "go-mupdf/"
-	Ldflags   = "LDFLAGS: /usr/local/lib/libmupdf.a /usr/local/lib/libmupdf-js-none.a -lm -lfreetype -ljpeg -lopenjp2 -ljbig2dec -lssl -lcrypto"
+)
+
+var (
+	Ldflags = fmt.Sprintf("LDFLAGS: %[1]s/lib/libmupdf.a %[1]s/lib/libmupdf-js-none.a -lm -lfreetype -ljpeg -lopenjp2 -ljbig2dec -lssl -lcrypto", CLibRoot)
 )
 
 var (
@@ -83,5 +90,5 @@ var (
 func Test(*testing.T) {
 	c(pdf.Wrap())
 	c(fz.Wrap())
-	//fz.DebugPrint()
+	// fz.DebugPrint()
 }
